@@ -49,7 +49,7 @@ constexpr std::array<uint32_t, 1> DistortionMapper::kResultRectsToCorrect = {
 };
 
 // Only for capture result
-constexpr std::array<uint32_t, 2> DistortionMapper::kResultPointsToCorrectNoClamp = {
+constexpr std::array<uint32_t, 2> DistortionMapper::kResultPointsToCorrect = {
     ANDROID_STATISTICS_FACE_RECTANGLES, // Says rectangles, is really points
     ANDROID_STATISTICS_FACE_LANDMARKS,
 };
@@ -79,21 +79,12 @@ status_t DistortionMapper::setupStaticInfo(const CameraMetadata &deviceInfo) {
     array = deviceInfo.find(ANDROID_SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE);
     if (array.count != 4) return BAD_VALUE;
 
-    float arrayX = static_cast<float>(array.data.i32[0]);
-    float arrayY = static_cast<float>(array.data.i32[1]);
-    mArrayWidth = static_cast<float>(array.data.i32[2]);
-    mArrayHeight = static_cast<float>(array.data.i32[3]);
+    mArrayWidth = array.data.i32[2];
+    mArrayHeight = array.data.i32[3];
 
     array = deviceInfo.find(ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-    if (array.count != 4) return BAD_VALUE;
-
-    float activeX = static_cast<float>(array.data.i32[0]);
-    float activeY = static_cast<float>(array.data.i32[1]);
-    mActiveWidth = static_cast<float>(array.data.i32[2]);
-    mActiveHeight = static_cast<float>(array.data.i32[3]);
-
-    mArrayDiffX = activeX - arrayX;
-    mArrayDiffY = activeY - arrayY;
+    mActiveWidth = array.data.i32[2];
+    mActiveHeight = array.data.i32[3];
 
     return updateCalibration(deviceInfo);
 }
@@ -120,13 +111,22 @@ status_t DistortionMapper::correctCaptureRequest(CameraMetadata *request) {
                 if (weight == 0) {
                     continue;
                 }
-                res = mapCorrectedToRaw(e.data.i32 + j, 2, /*clamp*/true);
+                res = mapCorrectedToRaw(e.data.i32 + j, 2);
                 if (res != OK) return res;
+                for (size_t k = 0; k < 4; k+=2) {
+                    int32_t& x = e.data.i32[j + k];
+                    int32_t& y = e.data.i32[j + k + 1];
+                    // Clamp to within active array
+                    x = std::max(0, x);
+                    x = std::min(mActiveWidth - 1, x);
+                    y = std::max(0, y);
+                    y = std::min(mActiveHeight - 1, y);
+                }
             }
         }
         for (auto rect : kRequestRectsToCorrect) {
             e = request->find(rect);
-            res = mapCorrectedRectToRaw(e.data.i32, e.count / 4, /*clamp*/true);
+            res = mapCorrectedRectToRaw(e.data.i32, e.count / 4);
             if (res != OK) return res;
         }
     }
@@ -156,18 +156,27 @@ status_t DistortionMapper::correctCaptureResult(CameraMetadata *result) {
                 if (weight == 0) {
                     continue;
                 }
-                res = mapRawToCorrected(e.data.i32 + j, 2, /*clamp*/true);
+                res = mapRawToCorrected(e.data.i32 + j, 2);
                 if (res != OK) return res;
+                for (size_t k = 0; k < 4; k+=2) {
+                    int32_t& x = e.data.i32[j + k];
+                    int32_t& y = e.data.i32[j + k + 1];
+                    // Clamp to within active array
+                    x = std::max(0, x);
+                    x = std::min(mActiveWidth - 1, x);
+                    y = std::max(0, y);
+                    y = std::min(mActiveHeight - 1, y);
+                }
             }
         }
         for (auto rect : kResultRectsToCorrect) {
             e = result->find(rect);
-            res = mapRawRectToCorrected(e.data.i32, e.count / 4, /*clamp*/true);
+            res = mapRawRectToCorrected(e.data.i32, e.count / 4);
             if (res != OK) return res;
         }
-        for (auto pts : kResultPointsToCorrectNoClamp) {
+        for (auto pts : kResultPointsToCorrect) {
             e = result->find(pts);
-            res = mapRawToCorrected(e.data.i32, e.count / 2, /*clamp*/false);
+            res = mapRawToCorrected(e.data.i32, e.count / 2);
             if (res != OK) return res;
         }
     }
@@ -223,11 +232,8 @@ status_t DistortionMapper::updateCalibration(const CameraMetadata &result) {
     return OK;
 }
 
-status_t DistortionMapper::mapRawToCorrected(int32_t *coordPairs, int coordCount,
-        bool clamp, bool simple) {
+status_t DistortionMapper::mapRawToCorrected(int32_t *coordPairs, int coordCount) {
     if (!mValidMapping) return INVALID_OPERATION;
-
-    if (simple) return mapRawToCorrectedSimple(coordPairs, coordCount, clamp);
 
     if (!mValidGrids) {
         status_t res = buildGrids();
@@ -269,12 +275,6 @@ status_t DistortionMapper::mapRawToCorrected(int32_t *coordPairs, int coordCount
         // Interpolate along left edge of corrected quad (which are axis-aligned) for y
         float corrY = corrQuad->coords[1] + v * (corrQuad->coords[7] - corrQuad->coords[1]);
 
-        // Clamp to within active array
-        if (clamp) {
-            corrX = std::min(mActiveWidth - 1, std::max(0.f, corrX));
-            corrY = std::min(mActiveHeight - 1, std::max(0.f, corrY));
-        }
-
         coordPairs[i] = static_cast<int32_t>(std::round(corrX));
         coordPairs[i + 1] = static_cast<int32_t>(std::round(corrY));
     }
@@ -282,30 +282,7 @@ status_t DistortionMapper::mapRawToCorrected(int32_t *coordPairs, int coordCount
     return OK;
 }
 
-status_t DistortionMapper::mapRawToCorrectedSimple(int32_t *coordPairs, int coordCount,
-        bool clamp) const {
-    if (!mValidMapping) return INVALID_OPERATION;
-
-    float scaleX = mActiveWidth / mArrayWidth;
-    float scaleY = mActiveHeight / mArrayHeight;
-    for (int i = 0; i < coordCount * 2; i += 2) {
-        float x = coordPairs[i];
-        float y = coordPairs[i + 1];
-        float corrX = x * scaleX;
-        float corrY = y * scaleY;
-        if (clamp) {
-            corrX = std::min(mActiveWidth - 1, std::max(0.f, corrX));
-            corrY = std::min(mActiveHeight - 1, std::max(0.f, corrY));
-        }
-        coordPairs[i] = static_cast<int32_t>(std::round(corrX));
-        coordPairs[i + 1] = static_cast<int32_t>(std::round(corrY));
-    }
-
-    return OK;
-}
-
-status_t DistortionMapper::mapRawRectToCorrected(int32_t *rects, int rectCount, bool clamp,
-        bool simple) {
+status_t DistortionMapper::mapRawRectToCorrected(int32_t *rects, int rectCount) {
     if (!mValidMapping) return INVALID_OPERATION;
     for (int i = 0; i < rectCount * 4; i += 4) {
         // Map from (l, t, width, height) to (l, t, r, b)
@@ -316,7 +293,7 @@ status_t DistortionMapper::mapRawRectToCorrected(int32_t *rects, int rectCount, 
             rects[i + 1] + rects[i + 3]
         };
 
-        mapRawToCorrected(coords, 2, clamp, simple);
+        mapRawToCorrected(coords, 2);
 
         // Map back to (l, t, width, height)
         rects[i] = coords[0];
@@ -328,24 +305,14 @@ status_t DistortionMapper::mapRawRectToCorrected(int32_t *rects, int rectCount, 
     return OK;
 }
 
-status_t DistortionMapper::mapCorrectedToRaw(int32_t *coordPairs, int coordCount, bool clamp,
-        bool simple) const {
-    return mapCorrectedToRawImpl(coordPairs, coordCount, clamp, simple);
-}
-
 template<typename T>
-status_t DistortionMapper::mapCorrectedToRawImpl(T *coordPairs, int coordCount, bool clamp,
-        bool simple) const {
+status_t DistortionMapper::mapCorrectedToRaw(T *coordPairs, int coordCount) const {
     if (!mValidMapping) return INVALID_OPERATION;
 
-    if (simple) return mapCorrectedToRawImplSimple(coordPairs, coordCount, clamp);
-
-    float activeCx = mCx - mArrayDiffX;
-    float activeCy = mCy - mArrayDiffY;
     for (int i = 0; i < coordCount * 2; i += 2) {
-        // Move to normalized space from active array space
-        float ywi = (coordPairs[i + 1] - activeCy) * mInvFy;
-        float xwi = (coordPairs[i] - activeCx - mS * ywi) * mInvFx;
+        // Move to normalized space
+        float ywi = (coordPairs[i + 1] - mCy) * mInvFy;
+        float xwi = (coordPairs[i] - mCx - mS * ywi) * mInvFx;
         // Apply distortion model to calculate raw image coordinates
         float rSq = xwi * xwi + ywi * ywi;
         float Fr = 1.f + (mK[0] * rSq) + (mK[1] * rSq * rSq) + (mK[2] * rSq * rSq * rSq);
@@ -354,11 +321,6 @@ status_t DistortionMapper::mapCorrectedToRawImpl(T *coordPairs, int coordCount, 
         // Move back to image space
         float xr = mFx * xc + mS * yc + mCx;
         float yr = mFy * yc + mCy;
-        // Clamp to within pre-correction active array
-        if (clamp) {
-            xr = std::min(mArrayWidth - 1, std::max(0.f, xr));
-            yr = std::min(mArrayHeight - 1, std::max(0.f, yr));
-        }
 
         coordPairs[i] = static_cast<T>(std::round(xr));
         coordPairs[i + 1] = static_cast<T>(std::round(yr));
@@ -367,32 +329,10 @@ status_t DistortionMapper::mapCorrectedToRawImpl(T *coordPairs, int coordCount, 
     return OK;
 }
 
-template<typename T>
-status_t DistortionMapper::mapCorrectedToRawImplSimple(T *coordPairs, int coordCount,
-        bool clamp) const {
-    if (!mValidMapping) return INVALID_OPERATION;
+template status_t DistortionMapper::mapCorrectedToRaw(int32_t*, int) const;
+template status_t DistortionMapper::mapCorrectedToRaw(float*, int) const;
 
-    float scaleX = mArrayWidth / mActiveWidth;
-    float scaleY = mArrayHeight / mActiveHeight;
-    for (int i = 0; i < coordCount * 2; i += 2) {
-        float x = coordPairs[i];
-        float y = coordPairs[i + 1];
-        float rawX = x * scaleX;
-        float rawY = y * scaleY;
-        if (clamp) {
-            rawX = std::min(mArrayWidth - 1, std::max(0.f, rawX));
-            rawY = std::min(mArrayHeight - 1, std::max(0.f, rawY));
-        }
-        coordPairs[i] = static_cast<T>(std::round(rawX));
-        coordPairs[i + 1] = static_cast<T>(std::round(rawY));
-    }
-
-    return OK;
-}
-
-
-status_t DistortionMapper::mapCorrectedRectToRaw(int32_t *rects, int rectCount, bool clamp,
-        bool simple) const {
+status_t DistortionMapper::mapCorrectedRectToRaw(int32_t *rects, int rectCount) const {
     if (!mValidMapping) return INVALID_OPERATION;
 
     for (int i = 0; i < rectCount * 4; i += 4) {
@@ -404,7 +344,7 @@ status_t DistortionMapper::mapCorrectedRectToRaw(int32_t *rects, int rectCount, 
             rects[i + 1] + rects[i + 3]
         };
 
-        mapCorrectedToRaw(coords, 2, clamp, simple);
+        mapCorrectedToRaw(coords, 2);
 
         // Map back to (l, t, width, height)
         rects[i] = coords[0];
@@ -440,8 +380,7 @@ status_t DistortionMapper::buildGrids() {
             };
             mDistortedGrid[index].src = &mCorrectedGrid[index];
             mDistortedGrid[index].coords = mCorrectedGrid[index].coords;
-            status_t res = mapCorrectedToRawImpl(mDistortedGrid[index].coords.data(), 4,
-                    /*clamp*/false, /*simple*/false);
+            status_t res = mapCorrectedToRaw(mDistortedGrid[index].coords.data(), 4);
             if (res != OK) return res;
         }
     }

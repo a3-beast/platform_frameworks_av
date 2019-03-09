@@ -73,11 +73,8 @@ class DistortionMapper {
      *
      *   coordPairs: A pointer to an array of consecutive (x,y) points
      *   coordCount: Number of (x,y) pairs to transform
-     *   clamp: Whether to clamp the result to the bounds of the active array
-     *   simple: Whether to do complex correction or just a simple linear map
      */
-    status_t mapRawToCorrected(int32_t *coordPairs, int coordCount, bool clamp,
-            bool simple = true);
+    status_t mapRawToCorrected(int32_t *coordPairs, int coordCount);
 
     /**
      * Transform from distorted (original) to corrected (warped) coordinates.
@@ -85,11 +82,8 @@ class DistortionMapper {
      *
      *   rects: A pointer to an array of consecutive (x,y, w, h) rectangles
      *   rectCount: Number of rectangles to transform
-     *   clamp: Whether to clamp the result to the bounds of the active array
-     *   simple: Whether to do complex correction or just a simple linear map
      */
-    status_t mapRawRectToCorrected(int32_t *rects, int rectCount, bool clamp,
-            bool simple = true);
+    status_t mapRawRectToCorrected(int32_t *rects, int rectCount);
 
     /**
      * Transform from corrected (warped) to distorted (original) coordinates.
@@ -97,11 +91,9 @@ class DistortionMapper {
      *
      *   coordPairs: A pointer to an array of consecutive (x,y) points
      *   coordCount: Number of (x,y) pairs to transform
-     *   clamp: Whether to clamp the result to the bounds of the precorrection active array
-     *   simple: Whether to do complex correction or just a simple linear map
      */
-    status_t mapCorrectedToRaw(int32_t* coordPairs, int coordCount, bool clamp,
-            bool simple = true) const;
+    template<typename T>
+    status_t mapCorrectedToRaw(T* coordPairs, int coordCount) const;
 
     /**
      * Transform from corrected (warped) to distorted (original) coordinates.
@@ -109,11 +101,8 @@ class DistortionMapper {
      *
      *   rects: A pointer to an array of consecutive (x,y, w, h) rectangles
      *   rectCount: Number of rectangles to transform
-     *   clamp: Whether to clamp the result to the bounds of the precorrection active array
-     *   simple: Whether to do complex correction or just a simple linear map
      */
-    status_t mapCorrectedRectToRaw(int32_t *rects, int rectCount, bool clamp,
-            bool simple = true) const;
+    status_t mapCorrectedRectToRaw(int32_t *rects, int rectCount) const;
 
     struct GridQuad {
         // Source grid quad, or null
@@ -161,18 +150,8 @@ class DistortionMapper {
     // Only capture result
     static const std::array<uint32_t, 1> kResultRectsToCorrect;
 
-    // Only for capture results; don't clamp
-    static const std::array<uint32_t, 2> kResultPointsToCorrectNoClamp;
-
-    // Single implementation for various mapCorrectedToRaw methods
-    template<typename T>
-    status_t mapCorrectedToRawImpl(T* coordPairs, int coordCount, bool clamp, bool simple) const;
-
-    // Simple linear interpolation option
-    template<typename T>
-    status_t mapCorrectedToRawImplSimple(T* coordPairs, int coordCount, bool clamp) const;
-
-    status_t mapRawToCorrectedSimple(int32_t *coordPairs, int coordCount, bool clamp) const;
+    // Only for capture results
+    static const std::array<uint32_t, 2> kResultPointsToCorrect;
 
     // Utility to create reverse mapping grids
     status_t buildGrids();
@@ -189,11 +168,9 @@ class DistortionMapper {
     float mK[5];
 
     // pre-correction active array dimensions
-    float mArrayWidth, mArrayHeight;
+    int mArrayWidth, mArrayHeight;
     // active array dimensions
-    float mActiveWidth, mActiveHeight;
-    // corner offsets between pre-correction and active arrays
-    float mArrayDiffX, mArrayDiffY;
+    int mActiveWidth, mActiveHeight;
 
     std::vector<GridQuad> mCorrectedGrid;
     std::vector<GridQuad> mDistortedGrid;
