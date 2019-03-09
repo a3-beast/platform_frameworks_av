@@ -96,9 +96,7 @@ LOCAL_CFLAGS += -Wall -Wextra -Werror
 
 #//!++
 # for Mtk debug level use
-ifeq ($(TARGET_BUILD_VARIANT),user)
 LOCAL_CFLAGS += -DMTKCAM_TARGET_BUILD_USER="yes"
-endif
 #//!--
 
 #//!++
