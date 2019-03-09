@@ -331,14 +331,7 @@ status_t Camera3Stream::finishConfiguration() {
 
     status_t res;
     res = configureQueueLocked();
-    // configureQueueLocked could return error in case of abandoned surface.
-    // Treat as non-fatal error.
-    if (res == NO_INIT || res == DEAD_OBJECT) {
-        ALOGE("%s: Unable to configure stream %d queue (non-fatal): %s (%d)",
-                __FUNCTION__, mId, strerror(-res), res);
-        mState = STATE_ABANDONED;
-        return res;
-    } else if (res != OK) {
+    if (res != OK) {
         ALOGE("%s: Unable to configure stream %d queue: %s (%d)",
                 __FUNCTION__, mId, strerror(-res), res);
         mState = STATE_ERROR;
@@ -576,6 +569,7 @@ status_t Camera3Stream::tearDown() {
 }
 
 status_t Camera3Stream::getBuffer(camera3_stream_buffer *buffer,
+        nsecs_t waitBufferTimeout,
         const std::vector<size_t>& surface_ids) {
     ATRACE_CALL();
     Mutex::Autolock l(mLock);
@@ -593,13 +587,16 @@ status_t Camera3Stream::getBuffer(camera3_stream_buffer *buffer,
         ALOGV("%s: Already dequeued max output buffers (%d), wait for next returned one.",
                         __FUNCTION__, camera3_stream::max_buffers);
         nsecs_t waitStart = systemTime(SYSTEM_TIME_MONOTONIC);
-        res = mOutputBufferReturnedSignal.waitRelative(mLock, kWaitForBufferDuration);
+        if (waitBufferTimeout < kWaitForBufferDuration) {
+            waitBufferTimeout = kWaitForBufferDuration;
+        }
+        res = mOutputBufferReturnedSignal.waitRelative(mLock, waitBufferTimeout);
         nsecs_t waitEnd = systemTime(SYSTEM_TIME_MONOTONIC);
         mBufferLimitLatency.add(waitStart, waitEnd);
         if (res != OK) {
             if (res == TIMED_OUT) {
                 ALOGE("%s: wait for output buffer return timed out after %lldms (max_buffers %d)",
-                        __FUNCTION__, kWaitForBufferDuration / 1000000LL,
+                        __FUNCTION__, waitBufferTimeout / 1000000LL,
                         camera3_stream::max_buffers);
             }
             return res;

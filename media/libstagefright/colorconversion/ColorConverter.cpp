@@ -287,9 +287,13 @@ status_t ColorConverter::convertYUV420PlanarUseLibYUV(
         (const uint8_t *)src.mBits + src.mStride * src.mHeight
         + (src.mCropTop / 2) * (src.mStride / 2) + (src.mCropLeft / 2);
 
+//  @M support odd width & odd height case
+    const uint8_t *src_v =
+        src_u + (src.mStride) * (src.mHeight)/4;
+/*
     const uint8_t *src_v =
         src_u + (src.mStride / 2) * (src.mHeight / 2);
-
+*/
     switch (mDstFormat) {
     case OMX_COLOR_Format16bitRGB565:
         libyuv::I420ToRGB565(src_y, src.mStride, src_u, src.mStride / 2, src_v, src.mStride / 2,

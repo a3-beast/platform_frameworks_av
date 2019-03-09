@@ -83,6 +83,8 @@ public:
                                         const struct audio_config_base* /*clientConfig*/,
                                         const struct audio_config_base* /*deviceConfig*/,
                                         audio_patch_handle_t /*patchHandle*/) override { }
+    /* MTK_AUDIO */
+    status_t getCustomAudioVolume(void* /*pCustomVol*/) override {  return NO_INIT; }
 };
 
 } // namespace android

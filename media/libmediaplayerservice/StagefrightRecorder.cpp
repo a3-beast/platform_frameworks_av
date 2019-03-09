@@ -58,6 +58,8 @@
 #include <system/audio.h>
 
 #include "ARTPWriter.h"
+#include <media/stagefright/MtkMPEG4Writer.h> // add for mtk
+
 
 namespace android {
 
@@ -750,7 +752,7 @@ status_t StagefrightRecorder::setParamGeoDataLatitude(
 
 status_t StagefrightRecorder::setParameter(
         const String8 &key, const String8 &value) {
-    ALOGV("setParameter: key (%s) => value (%s)", key.string(), value.string());
+    ALOGD("setParameter: key (%s) => value (%s)", key.string(), value.string());
     if (key == "max-duration") {
         int64_t max_duration_ms;
         if (safe_strtoi64(value.string(), &max_duration_ms)) {
@@ -857,7 +859,10 @@ status_t StagefrightRecorder::setParameter(
             return setParamCaptureFps(fps);
         }
     } else {
-        ALOGE("setParameter: failed to find key %s", key.string());
+// add for mtk
+        return setParameterEx(key, value);
+// end of add for mtk
+//        ALOGE("setParameter: failed to find key %s", key.string());
     }
     return BAD_VALUE;
 }
@@ -970,7 +975,8 @@ status_t StagefrightRecorder::prepare() {
 }
 
 status_t StagefrightRecorder::start() {
-    ALOGV("start");
+//    ALOGV("start");
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     Mutex::Autolock autolock(mLock);
     if (mOutputFd < 0) {
         ALOGE("Output file descriptor is invalid");
@@ -1050,7 +1056,7 @@ status_t StagefrightRecorder::start() {
 
         addBatteryData(params);
     }
-
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     return status;
 }
 
@@ -1598,11 +1604,29 @@ status_t StagefrightRecorder::setupCameraSource(
             return BAD_VALUE;
         }
 
+#ifdef MTK_SLOW_MOTION_VIDEO_SUPPORT
+        // if mCaptureFps > 2*mFrameRate, It's should be slow-mo mode.
+        // AOSP CameraSourceTimelapse flow can't support this case.
+        // So used normal camerasource to record video,and adjust timestamp in writer.
+        if (mCaptureFps > 2*mFrameRate) {
+            *cameraSource = CameraSource::CreateFromCamera(
+                    mCamera, mCameraProxy, mCameraId, mClientName, mClientUid, mClientPid,
+                    videoSize, mCaptureFps,
+                    mPreviewSurface);
+        } else {
+            mCameraSourceTimeLapse = CameraSourceTimeLapse::CreateFromCamera(
+                    mCamera, mCameraProxy, mCameraId, mClientName, mClientUid, mClientPid,
+                    videoSize, mFrameRate, mPreviewSurface,
+                    std::llround(1e6 / mCaptureFps));
+            *cameraSource = mCameraSourceTimeLapse;
+        }
+#else
         mCameraSourceTimeLapse = CameraSourceTimeLapse::CreateFromCamera(
                 mCamera, mCameraProxy, mCameraId, mClientName, mClientUid, mClientPid,
                 videoSize, mFrameRate, mPreviewSurface,
                 std::llround(1e6 / mCaptureFps));
         *cameraSource = mCameraSourceTimeLapse;
+#endif
     } else {
         *cameraSource = CameraSource::CreateFromCamera(
                 mCamera, mCameraProxy, mCameraId, mClientName, mClientUid, mClientPid,
@@ -1714,7 +1738,16 @@ status_t StagefrightRecorder::setupVideoEncoder(
     }
 
     format->setInt32("bitrate", mVideoBitRate);
+#ifdef MTK_SLOW_MOTION_VIDEO_SUPPORT
+    if ((mCaptureFps > (2*mFrameRate)) && (mVideoSource == VIDEO_SOURCE_CAMERA)) {
+        ALOGD("set slowmotion fps to encoder %f", mCaptureFps);
+        format->setInt32("frame-rate", mCaptureFps);
+    } else {
+        format->setInt32("frame-rate", mFrameRate);
+    }
+#else
     format->setInt32("frame-rate", mFrameRate);
+#endif
     format->setInt32("i-frame-interval", mIFramesIntervalSec);
 
     if (mVideoTimeScale > 0) {
@@ -1840,7 +1873,11 @@ status_t StagefrightRecorder::setupMPEG4orWEBMRecording() {
     if (mOutputFormat == OUTPUT_FORMAT_WEBM) {
         writer = new WebmWriter(mOutputFd);
     } else {
+#if 0
         writer = mp4writer = new MPEG4Writer(mOutputFd);
+#else // add for mtk MtkMPEG4Writer
+        writer = mp4writer = new MtkMPEG4Writer(mOutputFd);
+#endif
     }
 
     if (mVideoSource < VIDEO_SOURCE_LIST_END) {
@@ -1898,7 +1935,7 @@ status_t StagefrightRecorder::setupMPEG4orWEBMRecording() {
         mStartTimeOffsetMs = mEncoderProfiles->getStartTimeOffsetMs(mCameraId);
     } else if (mVideoSource == VIDEO_SOURCE_SURFACE) {
         // surface source doesn't need large initial delay
-        mStartTimeOffsetMs = 100;
+        mStartTimeOffsetMs = 500;
     }
     if (mStartTimeOffsetMs > 0) {
         writer->setStartTimeOffsetMs(mStartTimeOffsetMs);
@@ -1926,10 +1963,21 @@ void StagefrightRecorder::setupMPEG4orWEBMMetaData(sp<MetaData> *meta) {
             (*meta)->setInt32(kKeyRotation, mRotationDegrees);
         }
     }
+// add for mtk defined infos in mediarecorder.h.
+    (*meta)->setInt32(kKeyMediaInfoFlag, mMediaInfoFlag);
+#ifdef MTK_SLOW_MOTION_VIDEO_SUPPORT
+    if ((mCaptureFps > (2*mFrameRate)) && (mVideoSource == VIDEO_SOURCE_CAMERA)) {
+        ALOGD("slowmotion speed %d", int(mCaptureFps/mFrameRate));
+        (*meta)->setInt32(kKeySlowMotionTag, int(mCaptureFps/mFrameRate));
+    }
+#endif
+
+// ~add for mtk
 }
 
 status_t StagefrightRecorder::pause() {
-    ALOGV("pause");
+//    ALOGV("pause");
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     if (!mStarted) {
         return INVALID_OPERATION;
     }
@@ -1949,19 +1997,32 @@ status_t StagefrightRecorder::pause() {
         mDurationRecordedUs += recordingUs;
         mStartedRecordingUs = 0;
     }
-
+// add for mtk
+    if (mAudioEncoderSource != nullptr) {
+        if (mOutputFormat == OUTPUT_FORMAT_AMR_NB || mOutputFormat == OUTPUT_FORMAT_AMR_WB ||
+            mOutputFormat == OUTPUT_FORMAT_AAC_ADIF ||mOutputFormat == OUTPUT_FORMAT_AAC_ADTS) {
+            ALOGW("Audio only will pause writer to avoid block when stop after pause!");
+            mWriter->pause();
+        }else{
+            mAudioEncoderSource->pause();
+        }
+    }
+// ~add for mtk
+#if 0 //comment google code
     if (mAudioEncoderSource != NULL) {
         mAudioEncoderSource->pause();
     }
+#endif
     if (mVideoEncoderSource != NULL) {
         mVideoEncoderSource->pause(meta.get());
     }
-
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     return OK;
 }
 
 status_t StagefrightRecorder::resume() {
-    ALOGV("resume");
+//    ALOGV("resume");
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     if (!mStarted) {
         return INVALID_OPERATION;
     }
@@ -2001,13 +2062,31 @@ status_t StagefrightRecorder::resume() {
     }
     sp<MetaData> meta = new MetaData;
     meta->setInt64(kKeyTime, resumeStartTimeUs);
-    for (const auto &source : { mAudioEncoderSource, mVideoEncoderSource }) {
-        if (source == nullptr) {
-            continue;
+// add for mtk
+    if (mAudioEncoderSource != nullptr) {
+        if (mOutputFormat == OUTPUT_FORMAT_AMR_NB || mOutputFormat == OUTPUT_FORMAT_AMR_WB ||
+            mOutputFormat == OUTPUT_FORMAT_AAC_ADIF ||mOutputFormat == OUTPUT_FORMAT_AAC_ADTS) {
+            ALOGD("audio only Recording pause-resume");
+            mWriter->start();
+        }else{
+            mAudioEncoderSource->setInputBufferTimeOffset((int64_t)timeOffset);
+            mAudioEncoderSource->start(meta.get());
         }
-        source->setInputBufferTimeOffset((int64_t)timeOffset);
-        source->start(meta.get());
     }
+    if (mVideoEncoderSource != nullptr) {
+        mVideoEncoderSource->setInputBufferTimeOffset((int64_t)timeOffset);
+        mVideoEncoderSource->start(meta.get());
+    }
+// end of add for mtk
+// comment google code
+//    for (const auto &source : { mAudioEncoderSource, mVideoEncoderSource }) {
+//        if (source == nullptr) {
+//            continue;
+//        }
+//        source->setInputBufferTimeOffset((int64_t)timeOffset);
+//        source->start(meta.get());
+//    }
+
 
 
     // sum info on pause duration
@@ -2020,11 +2099,13 @@ status_t StagefrightRecorder::resume() {
 
     mPauseStartTimeUs = 0;
 
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     return OK;
 }
 
 status_t StagefrightRecorder::stop() {
-    ALOGV("stop");
+//    ALOGV("stop");
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     Mutex::Autolock autolock(mLock);
     status_t err = OK;
 
@@ -2034,12 +2115,19 @@ status_t StagefrightRecorder::stop() {
     }
 
     int64_t stopTimeUs = systemTime() / 1000;
-    for (const auto &source : { mAudioEncoderSource, mVideoEncoderSource }) {
-        if (source != nullptr && OK != source->setStopTimeUs(stopTimeUs)) {
-            ALOGW("Failed to set stopTime %lld us for %s",
-                    (long long)stopTimeUs, source->isVideo() ? "Video" : "Audio");
+// add for mtk
+    if (mVideoEncoderSource != nullptr) {
+// ~add for mtk
+        for (const auto &source : { mAudioEncoderSource, mVideoEncoderSource }) {
+            if (source != nullptr && OK != source->setStopTimeUs(stopTimeUs)) {
+                ALOGW("Failed to set stopTime %lld us for %s",
+                      (long long)stopTimeUs, source->isVideo() ? "Video" : "Audio");
+            }
         }
+// add for mtk
     }
+// ~add for mtk
+
 
     if (mWriter != NULL) {
         err = mWriter->stop();
@@ -2093,6 +2181,7 @@ status_t StagefrightRecorder::stop() {
         addBatteryData(params);
     }
 
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     return err;
 }
 
@@ -2154,6 +2243,9 @@ status_t StagefrightRecorder::reset() {
 
     mOutputFd = -1;
 
+// add for mtk defined infos in mediarecorder.h.
+    mMediaInfoFlag = 0;
+// ~add for mtk
     return OK;
 }
 
@@ -2307,4 +2399,39 @@ status_t StagefrightRecorder::dump(
     ::write(fd, result.string(), result.size());
     return OK;
 }
+// add for mtk, mtk added interfaces
+status_t StagefrightRecorder::setParameterEx(const String8 &key, const String8 &value) {
+    /* add for mtk defined infos in mediarecorder.h. If ap set the parameter,
+       then return the related info, otherwise not notify the message.
+       This can avoid the third apps treat the mtk defined infos as err.
+    */
+    if (key == "media-recorder-info") {
+        int32_t MediaRecorderInfo = 0;
+        if (safe_strtoi32(value.string(), &MediaRecorderInfo)) {
+            switch (MediaRecorderInfo) {
+                case 895:
+                    mMediaInfoFlag |= RECORDING_SIZE_FLAG;
+                    break;
+                case 1998:
+                    mMediaInfoFlag |= START_TIMER_FLAG;
+                    break;
+                case 1999:
+                    mMediaInfoFlag |= CAMERA_RELEASE_FLAG;
+                    break;
+                default:
+                    ALOGE(" set media-recorder-info bad value!!!");
+                    return BAD_VALUE;
+            }
+            return OK;
+        } else {
+            ALOGE(" set media-recorder-info failed!!!");
+            return BAD_VALUE;
+        }
+    } else {
+        ALOGE("setParameterEx: failed to find key %s", key.string());
+    }
+
+    return BAD_VALUE;
+}
+
 }  // namespace android

@@ -179,6 +179,12 @@ MediaAnalyticsItem::SessionID_t MediaAnalyticsService::submit(MediaAnalyticsItem
             break;
     }
 
+    //mtk+ big lock to prevent race condtion.
+    //now there are many native exceptions releated this feature.
+    //Lists are not protected well like mSummarizerSets, mPkgMappings and
+    //mSummaries. Hope Android will be fixed next version.
+    Mutex::Autolock _l(mBigLock);
+
     // Overwrite package name and version if the caller was untrusted.
     if (!isTrusted) {
       setPkgInfo(item, item->getUid(), true, true);

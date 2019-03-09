@@ -55,6 +55,18 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_CFLAGS := -Werror -Wall
 
+# <MTK
+ifdef MTK_PATH_SOURCE
+LOCAL_C_INCLUDES += \
+    $(TOPDIR)vendor/mediatek/proprietary/custom/common/cgen/inc \
+    $(TOPDIR)vendor/mediatek/proprietary/custom/common/cgen/cfgfileinc \
+    $(TOPDIR)vendor/mediatek/proprietary/custom/common/cgen/cfgdefault \
+    $(TOPDIR)vendor/mediatek/proprietary/external/bessound_HD \
+    $(TOPDIR)vendor/mediatek/proprietary/external/AudioCompensationFilter \
+    $(TOPDIR)vendor/mediatek/proprietary/external/AudioComponentEngine
+endif
+# MTK>
+
 include $(BUILD_EXECUTABLE)
 
 #

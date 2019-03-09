@@ -23,6 +23,7 @@
 #include <android/hardware/cas/native/1.0/IDescrambler.h>
 #include <binder/MemoryDealer.h>
 #include <hidlmemory/FrameworkUtils.h>
+#include <OMX_Core.h>
 #include <media/openmax/OMX_Core.h>
 #include <media/stagefright/foundation/AMessage.h>
 #include <media/stagefright/foundation/AUtils.h>
@@ -408,6 +409,9 @@ void ACodecBufferChannel::drainThisBuffer(
     }
     if (omxFlags & OMX_BUFFERFLAG_EOS) {
         flags |= MediaCodec::BUFFER_FLAG_EOS;
+    }
+    if (omxFlags & OMX_BUFFERFLAG_DUMMY_NALU) {
+        flags |= MediaCodec::BUFFER_FLAG_DUMMY;
     }
     it->mClientBuffer->meta()->setInt32("flags", flags);
 

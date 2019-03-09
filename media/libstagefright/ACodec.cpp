@@ -59,13 +59,15 @@
 #include "include/SecureBuffer.h"
 #include "include/SharedMemoryBuffer.h"
 #include <media/stagefright/omx/OMXUtils.h>
+//mtkadd+
+#include "mtkMp3Acodec/AcodecMtkMp3.h"
 
 namespace android {
 
 using binder::Status;
 
 enum {
-    kMaxIndicesToCheck = 32, // used when enumerating supported formats and profiles
+    kMaxIndicesToCheck = 128, // used when enumerating supported formats and profiles
 };
 
 // OMX errors are directly mapped into status_t range if
@@ -137,6 +139,8 @@ static OMX_VIDEO_CONTROLRATETYPE getVideoBitrateMode(const sp<AMessage> &msg) {
             case 1: return OMX_Video_ControlRateVariable;
             //BITRATE_MODE_CBR
             case 2: return OMX_Video_ControlRateConstant;
+            // BITRATE_MODE_WFD
+            case 0x7F000001: return OMX_Video_ControlRateMtkWFD;
             default: break;
         }
     }
@@ -304,6 +308,10 @@ private:
     virtual bool onOMXFrameRendered(int64_t mediaTimeUs, nsecs_t systemNano);
 
     void getMoreInputDataIfPossible();
+
+//   set AvSyncRefTime to omx +
+    void setAVSyncTime(int64_t time);
+//   set AvSyncRefTime to omx -
 
     DISALLOW_EVIL_CONSTRUCTORS(BaseState);
 };
@@ -513,6 +521,23 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 
+//   set AvSyncRefTime to omx +
+static inline bool IsWhoIAm(const char* who, const char* me)
+{
+    bool ret = false;
+    if (!strncmp(who, me, strlen(me))){
+        ret = true;
+    }
+    return ret;
+}
+
+static inline bool IsMTKVideoDecoderComponent(const char* componentName)
+{
+    #define IAM_MTK_VDEC "OMX.MTK.VIDEO.DECODER"
+    return IsWhoIAm(componentName, IAM_MTK_VDEC);
+}
+//   set AvSyncRefTime to omx -
+
 void ACodec::BufferInfo::setWriteFence(int fenceFd, const char *dbg) {
     if (mFenceFd >= 0) {
         ALOGW("OVERWRITE OF %s fence %d by write fence %d in %s",
@@ -579,7 +604,9 @@ ACodec::ACodec()
       mStateGeneration(0),
       mVendorExtensionsStatus(kExtensionsUnchecked) {
     memset(&mLastHDRStaticInfo, 0, sizeof(mLastHDRStaticInfo));
-
+//   set AvSyncRefTime to omx +
+    mAnchorTimeRealUs = 0;
+//   set AvSyncRefTime to omx -
     mUninitializedState = new UninitializedState(this);
     mLoadedState = new LoadedState(this);
     mLoadedToIdleState = new LoadedToIdleState(this);
@@ -602,9 +629,16 @@ ACodec::ACodec()
     memset(&mLastNativeWindowCrop, 0, sizeof(mLastNativeWindowCrop));
 
     changeState(mUninitializedState);
+#ifdef MTK_VILTE_SUPPORT
+    mIsViLTE = false;
+#endif //MTK_VILTE_SUPPORT
 }
 
 ACodec::~ACodec() {
+}
+
+status_t ACodec::setupAudioCodec(status_t err, const char *, bool, const sp<AMessage> &) {
+    return err;
 }
 
 void ACodec::initiateSetup(const sp<AMessage> &msg) {
@@ -1051,6 +1085,27 @@ status_t ACodec::setupNativeWindowSizeFormatAndUsage(
     OMX_PARAM_PORTDEFINITIONTYPE def;
     InitOMXParams(&def);
     def.nPortIndex = kPortIndexOutput;
+
+//mtk add query HWC usage for decoder
+    OMX_U32 ANW_HWComposer = 0;
+    OMX_PARAM_U32TYPE param;
+    OMX_INDEXTYPE index2;
+    status_t err2 = nativeWindow->query(nativeWindow, NATIVE_WINDOW_QUEUES_TO_WINDOW_COMPOSER , (int *)&ANW_HWComposer);
+    if (OK == err2) {
+        err2 = mOMXNode->getExtensionIndex("OMX.MTK.index.param.video.ANW_HWComposer", &index2);
+        if (OK == err2) {
+            InitOMXParams(&param);
+            param.nU32 = ANW_HWComposer;
+            err2 = mOMXNode->setParameter(index2, &param, sizeof(param));
+            if (OK != err2) {
+                ALOGW("Failed to set ANW_HWComposer to OMX, ignoring (%d)", err2);
+            }
+        }
+    }
+    else {
+        ALOGW("Failed to query NW for HWC usage, ignoring: %s (%d)", strerror(-err2), -err2);
+    }
+
 
     status_t err = mOMXNode->getParameter(
             OMX_IndexParamPortDefinition, &def, sizeof(def));
@@ -2101,6 +2156,14 @@ status_t ACodec::configureCodec(
                     sampleRate,
                     numChannels);
         }
+        //mtkadd+ for lowpower
+        if (!strcmp(mComponentName.c_str(), "OMX.MTK.AUDIO.DECODER.MP3")) {
+            //AcodecMtkMp3::setOmxReadMultiFrame(mOMXNode, msg);
+            if (AcodecMtkMp3::setOmxReadMultiFrame(mOMXNode, msg) == OK) {
+                msg->setInt32("mtkMp3Codec", 1);
+            }
+        }
+
     } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC)) {
         int32_t numChannels, sampleRate;
         if (!msg->findInt32("channel-count", &numChannels)
@@ -2158,6 +2221,19 @@ status_t ACodec::configureCodec(
                     encoder, numChannels, sampleRate, bitrate, aacProfile,
                     isADTS != 0, sbrMode, maxOutputChannelCount, drc,
                     pcmLimiterEnable);
+
+            // csd error handle for avi raw aac
+            int32_t isAviRawAac;
+            if (msg->findInt32("is-rawAacInAvi", &isAviRawAac)) {
+                OMX_AUDIO_PARAM_AACPROFILETYPE profileAAC;
+                InitOMXParams(&profileAAC);
+                profileAAC.nPortIndex = kPortIndexInput;
+                err = mOMXNode->getParameter(
+                        OMX_IndexParamAudioAac, &profileAAC, sizeof(profileAAC));
+                profileAAC.eAACStreamFormat = OMX_AUDIO_AACStreamFormatRAW;
+                err = mOMXNode->setParameter(
+                        OMX_IndexParamAudioAac, &profileAAC, sizeof(profileAAC));
+            }
         }
     } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AMR_NB)) {
         err = setupAMRCodec(encoder, false /* isWAMR */, bitrate);
@@ -2234,8 +2310,17 @@ status_t ACodec::configureCodec(
         } else {
             err = setupEAC3Codec(encoder, numChannels, sampleRate);
         }
+    } else {
+        // user can choose if support mtk audio codec
+        err = setupAudioCodec(err, mime, encoder, msg);
     }
 
+    if (err != OK) {
+        return err;
+    }
+
+    // add for support 24bit high resolution audio feature
+    err = setupAudioBitWidth(msg);
     if (err != OK) {
         return err;
     }
@@ -2279,7 +2364,15 @@ status_t ACodec::configureCodec(
         err = setOperatingRate(rateFloat, mIsVideo);
         err = OK; // ignore errors
     }
-
+#ifdef MTK_VILTE_SUPPORT
+    if (err == OK) {
+        status_t err = setViLTEParameters(msg, false);
+        if (err != OK) {
+            ALOGE("[%s] failed to setViLTEParameters 1",
+                  mComponentName.c_str());
+        }
+    }
+#endif //MTK_VILTE_SUPPORT
     if (err == OK) {
         err = setVendorParameters(msg);
         if (err != OK) {
@@ -3242,6 +3335,14 @@ static const struct VideoCodingMapEntry {
     { MEDIA_MIMETYPE_VIDEO_VP9, OMX_VIDEO_CodingVP9 },
     { MEDIA_MIMETYPE_VIDEO_DOLBY_VISION, OMX_VIDEO_CodingDolbyVision },
     { MEDIA_MIMETYPE_IMAGE_ANDROID_HEIC, OMX_VIDEO_CodingImageHEIC },
+//mtk add support mime type
+    { MEDIA_MIMETYPE_VIDEO_WMV, OMX_VIDEO_CodingWMV },
+    { MEDIA_MIMETYPE_VIDEO_DIVX, OMX_VIDEO_CodingDIVX },
+    { MEDIA_MIMETYPE_VIDEO_DIVX3, OMX_VIDEO_CodingDIVX3 },
+    { MEDIA_MIMETYPE_VIDEO_XVID, OMX_VIDEO_CodingXVID },
+    { MEDIA_MIMETYPE_VIDEO_MJPEG, OMX_VIDEO_CodingMJPEG },
+    { MEDIA_MIMETYPE_VIDEO_SORENSON_SPARK, OMX_VIDEO_CodingS263 },
+    { MEDIA_MIMETYPE_VIDEO_VPX, OMX_VIDEO_CodingVP8 },
 };
 
 static status_t GetVideoCodingTypeFromMime(
@@ -3877,6 +3978,16 @@ status_t ACodec::setupVideoEncoder(
     video_def->nBitrate = bitrate;
     video_def->eCompressionFormat = compressionFormat;
     video_def->eColorFormat = OMX_COLOR_FormatUnused;
+
+#ifdef MTK_VILTE_SUPPORT
+    if (err == OK) {
+        status_t err = setViLTEParameters(msg, false);
+        if (err != OK) {
+            ALOGE("[%s] failed to setViLTEParameters 2",
+                  mComponentName.c_str());
+        }
+    }
+#endif //MTK_VILTE_SUPPORT
 
     err = mOMXNode->setParameter(
             OMX_IndexParamPortDefinition, &def, sizeof(def));
@@ -5095,12 +5206,26 @@ status_t ACodec::getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify) {
                         encoding = kAudioEncodingPcmFloat;
                     } else if (params.nBitPerSample != 16u
                             || params.eNumData != OMX_NumericalDataSigned) {
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+                        if (params.eNumData == OMX_NumericalDataSigned) {
+                            ALOGD("PCM BitPerSample(%d)", params.nBitPerSample);
+                        } else {
+                            ALOGE("unsupported PCM port: %s(%d), %s(%d) mode ",
+                                    asString(params.eNumData), params.eNumData,
+                                    asString(params.ePCMMode), params.ePCMMode);
+                            return FAILED_TRANSACTION;
+                        }
+#else
                         ALOGE("unsupported PCM port: %s(%d), %s(%d) mode ",
                                 asString(params.eNumData), params.eNumData,
                                 asString(params.ePCMMode), params.ePCMMode);
                         return FAILED_TRANSACTION;
+#endif
                     }
                     notify->setInt32("pcm-encoding", encoding);
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+                    notify->setInt32("bit-width", params.nBitPerSample);
+#endif
 
                     if (mChannelMaskPresent) {
                         notify->setInt32("channel-mask", mChannelMask);
@@ -5425,6 +5550,12 @@ void ACodec::sendFormatChange() {
 
 void ACodec::signalError(OMX_ERRORTYPE error, status_t internalError) {
     ALOGE("signalError(omxError %#x, internalError %d)", error, internalError);
+
+#ifdef MTK_VILTE_SUPPORT
+    if (signalViLTEError(error, statusFromOMXError(error)) == true) {
+        return;
+    }
+#endif  // MTK_VILTE_SUPPORT
 
     if (internalError == UNKNOWN_ERROR) { // find better error code
         const status_t omxStatus = statusFromOMXError(error);
@@ -5832,16 +5963,31 @@ void ACodec::BaseState::onInputBufferFilled(const sp<AMessage> &msg) {
         case RESUBMIT_BUFFERS:
         {
             if (buffer != NULL && !mCodec->mPortEOS[kPortIndexInput]) {
-                // Do not send empty input buffer w/o EOS to the component.
-                if (buffer->size() == 0 && !eos) {
-                    postFillThisBuffer(info);
-                    break;
+                // MTK add specific condition for DIVX3 & MPEG4 since in some cases it needs to
+                // send null buffer as a csd, which size is 0, to the decoder.
+                // Otherwise, decoder can not get the width/height to init the driver.
+                if (strcasecmp("OMX.MTK.VIDEO.DECODER.DIVX3", mCodec->mComponentName.c_str()) &&
+                    strcasecmp("OMX.MTK.VIDEO.DECODER.MPEG4", mCodec->mComponentName.c_str())) {
+                    // Do not send empty input buffer w/o EOS to the component.
+                    if (buffer->size() == 0 && !eos) {
+                        postFillThisBuffer(info);
+                        break;
+                    }
                 }
 
                 int64_t timeUs;
                 CHECK(buffer->meta()->findInt64("timeUs", &timeUs));
 
                 OMX_U32 flags = OMX_BUFFERFLAG_ENDOFFRAME;
+
+#ifdef MTK_VILTE_SUPPORT
+
+                int32_t islostfull;
+                if (buffer->meta()->findInt32("lostfull", &islostfull) && islostfull != 0) {
+                    ALOGI("[%s] received lostfull. %lld", mCodec->mComponentName.c_str(), (long long)timeUs);
+                    flags |= OMX_BUFFERFLAG_DATACORRUPT;
+                }
+#endif
 
                 int32_t isCSD = 0;
                 if (buffer->meta()->findInt32("csd", &isCSD) && isCSD != 0) {
@@ -5916,7 +6062,13 @@ void ACodec::BaseState::onInputBufferFilled(const sp<AMessage> &msg) {
                     }
                 }
                 info->checkReadFence("onInputBufferFilled");
-
+#ifdef MTK_VILTE_SUPPORT
+                int32_t isLongtime = 0;
+                if (buffer->meta()->findInt32("longtime", &isLongtime) && isLongtime != 0) {
+                    flags |= OMX_BUFFERFLAG_CAMERASWITCH;
+                    ALOGI("onInputBufferFilled camera rotate or switch");
+                }
+#endif
                 status_t err2 = OK;
                 switch (mCodec->mPortMode[kPortIndexInput]) {
                 case IOMX::kPortModePresetByteBuffer:
@@ -6201,6 +6353,27 @@ bool ACodec::BaseState::onOMXFillBufferDone(
     return true;
 }
 
+//   set AvSyncRefTime to omx +
+void ACodec::BaseState::setAVSyncTime(int64_t time)
+{
+    if(IsMTKVideoDecoderComponent(mCodec->mComponentName.c_str())){
+        //Don't care the err here
+        OMX_PARAM_S64TYPE AVSyncTimeInfo;
+        InitOMXParams(&AVSyncTimeInfo);
+        AVSyncTimeInfo.nPortIndex = kPortIndexOutput;
+
+        AVSyncTimeInfo.nS64 = time;
+        status_t err = mCodec->mOMXNode->setConfig(
+            OMX_IndexVendorMtkOmxVdecAVSyncTime,
+            &AVSyncTimeInfo,
+            sizeof(AVSyncTimeInfo));
+        if (err != OK){
+            ALOGV("Failed to set OMX_IndexVendorMtkOmxVdecAVSyncTime");
+        }
+    }
+}
+//   set AvSyncRefTime to omx -
+
 void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
     IOMX::buffer_id bufferID;
     CHECK(msg->findInt32("buffer-id", (int32_t*)&bufferID));
@@ -6209,6 +6382,23 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
     sp<MediaCodecBuffer> buffer = static_cast<MediaCodecBuffer *>(obj.get());
     int32_t discarded = 0;
     msg->findInt32("discarded", &discarded);
+
+//   set AvSyncRefTime to omx +
+    int64_t avSyncTimeUs = 0;
+    if (!msg->findInt64("AvSyncRefTimeUs", &avSyncTimeUs)){
+        if (buffer->meta()->findInt64("AvSyncRefTimeUs", &avSyncTimeUs)) {
+            if (avSyncTimeUs != -1){
+                if (avSyncTimeUs < mCodec->mAnchorTimeRealUs){
+                    //TODO: Need to reset mAnchorTimeRealUs at proper place to avoid false alarm
+                    ALOGW("Got smaller av sync time. New:%lld < Old:%lld",
+                        (long long)avSyncTimeUs, (long long)mCodec->mAnchorTimeRealUs);
+                }
+                mCodec->mAnchorTimeRealUs = avSyncTimeUs;
+                setAVSyncTime(mCodec->mAnchorTimeRealUs);
+            }
+        }
+    }
+//   set AvSyncRefTime to omx -
 
     ssize_t index;
     BufferInfo *info = mCodec->findBufferByID(kPortIndexOutput, bufferID, &index);
@@ -6651,6 +6841,26 @@ bool ACodec::LoadedState::onConfigureComponent(
         mCodec->signalError(OMX_ErrorUndefined, makeNoSideEffectStatus(err));
         return false;
     }
+
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+    // MTK decoder's optimized data flow to enhace performance of thumbnail display
+    if (IsMTKVideoDecoderComponent(mCodec->mComponentName.c_str())) {
+        OMX_PARAM_U32TYPE param;
+        InitOMXParams(&param);
+        param.nPortIndex = mCodec->mIsEncoder ? kPortIndexOutput : kPortIndexInput;
+
+        int32_t enableThumbnailOptimzation = 0;
+        if (msg->findInt32("enableThumbnailOptimzation", &enableThumbnailOptimzation) && (enableThumbnailOptimzation == 1)) {
+            param.nU32 = (OMX_U32)enableThumbnailOptimzation;
+            err = mCodec->mOMXNode->setParameter(
+                    OMX_IndexVendorMtkOmxVdecThumbnailMode,
+                    &param, sizeof(param));
+            if (err != OK) {
+                ALOGW("ThumbnailOptimzation parameters set failed: %d", err);
+            }
+        }
+    }
+#endif //MTK_THUMBNAIL_OPTIMIZATION
 
     mCodec->mCallback->onComponentConfigured(mCodec->mInputFormat, mCodec->mOutputFormat);
 
@@ -7382,9 +7592,67 @@ status_t ACodec::setParameters(const sp<AMessage> &params) {
         }
     }
 
+{
+    int64_t seekTimeUs = 0;
+    if (params->findInt64("seekTimeUs", &seekTimeUs)){
+        if (mIsEncoder){
+            return ERROR_UNSUPPORTED;
+        }
+        ALOGD("set seekTimeUs %lld", (long long)seekTimeUs);
+
+        OMX_PARAM_S64TYPE pOmxTicksInfo;
+        InitOMXParams(&pOmxTicksInfo);
+        pOmxTicksInfo.nPortIndex = mIsEncoder ? kPortIndexOutput : kPortIndexInput;
+        pOmxTicksInfo.nS64 = seekTimeUs;
+
+        status_t err = mOMXNode->setConfig(
+                OMX_IndexVendorMtkOmxVdecSeekMode,
+                &pOmxTicksInfo,
+                sizeof(pOmxTicksInfo));
+
+        if (err != OK) {
+            ALOGE("setConfig(OOMX_IndexVendorMtkOmxVdecSeekMode) "
+                  "returned error 0x%08x", err);
+            return err;
+        }
+    }
+}
+
+#ifdef MTK_AUDIO_APE_SUPPORT
+    int32_t newframe = 0,firstbyte = 0; //for ape seek on acodec
+    if (params->findInt32("nwfrm", &newframe) &&
+            params->findInt32("sekbyte", &firstbyte))
+    {
+        OMX_AUDIO_PARAM_APETYPE profile;
+        InitOMXParams(&profile);
+        profile.nPortIndex = kPortIndexInput;
+
+        status_t err = mOMXNode->getParameter((OMX_INDEXTYPE)OMX_IndexParamAudioApe, &profile, sizeof(profile));
+        if (err != OK) {
+            return err;
+        }
+
+        profile.seekbyte = firstbyte;
+        profile.seekfrm = newframe;
+        ALOGI("APE setParameter nwfrm:%d sekbyte:%d",(int)newframe,(int)firstbyte);
+        err = mOMXNode->setParameter((OMX_INDEXTYPE)OMX_IndexParamAudioApe, &profile, sizeof(profile));
+        if (err != OK) {
+            return err;
+        }
+    }
+#endif
+
     // Ignore errors as failure is expected for codecs that aren't video encoders.
     (void)configureTemporalLayers(params, false /* inConfigure */, mOutputFormat);
 
+#ifdef MTK_VILTE_SUPPORT
+    status_t err_vilte = setViLTEParameters(params, true);
+    if (err_vilte != OK)
+    {
+        ALOGI("[%s] fail to setViLTEParameters 3",
+                mComponentName.c_str());
+    }
+#endif //MTK_VILTE_SUPPORT
     return setVendorParameters(params);
 }
 

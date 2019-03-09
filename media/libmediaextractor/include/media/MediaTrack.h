@@ -115,6 +115,15 @@ struct MediaTrack
 
     virtual ~MediaTrack();
 
+    //mtkadd for mp3 low power
+    virtual status_t setVendorMeta(const sp<MetaData> & /*meta*/) {
+        return ERROR_UNSUPPORTED;
+    }
+    //mtkadd for mp3 stop TOC
+    virtual status_t stopTocThreadIfTocEnabled() {
+        return ERROR_UNSUPPORTED;
+    }
+
 private:
     MediaTrack(const MediaTrack &);
     MediaTrack &operator=(const MediaTrack &);

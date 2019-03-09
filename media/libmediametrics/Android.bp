@@ -35,4 +35,26 @@ cc_library {
             cfi: true,
         },
     },
+
+    // to disable mediametrics
+    defaults: [
+        "mtk_libmediametrics_defaults",
+    ],
+}
+
+bootstrap_go_package {
+    name:"soong-libmediametrics-mediatek",
+    pkgPath:"android/soong/libmediametrics/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libmediametrics.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libmediametrics_defaults {
+    name: "mtk_libmediametrics_defaults",
 }

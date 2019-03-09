@@ -548,12 +548,15 @@ void NuPlayerDriver::updateMetrics(const char *where) {
     if (trackStats.size() > 0) {
         for (size_t i = 0; i < trackStats.size(); ++i) {
             const sp<AMessage> &stats = trackStats.itemAt(i);
+            //mtkadd+ check return value
+            bool ret = 0;
+            AString mime = "unknow"; //mtkadd+ initialization
+            ret = stats->findString("mime", &mime);
+            ALOGD_IF(!ret, "Fail to find mime");
 
-            AString mime;
-            stats->findString("mime", &mime);
-
-            AString name;
-            stats->findString("component-name", &name);
+            AString name = "unknow"; //mtkadd+ initialization
+            ret = stats->findString("component-name", &name);
+            ALOGD_IF(!ret, "Fail to find name");
 
             if (mime.startsWith("video/")) {
                 int32_t width, height;
@@ -626,6 +629,10 @@ void NuPlayerDriver::logMetrics(const char *where) {
 
         mAnalyticsItem->selfrecord();
 
+// add for mtk, ALPS04102521, delete mAnalyticsItem should ensure no one used, notifyListener_l
+// maybe using mAnalyticsItem->setInt32() which will cause use after delete. Add lock to avoid.
+        Mutex::Autolock autoLock(mLock);
+// end of add for mtk
         // re-init in case we prepare() and start() again.
         delete mAnalyticsItem ;
         mAnalyticsItem = new MediaAnalyticsItem("nuplayer");
@@ -765,7 +772,24 @@ void NuPlayerDriver::setAudioSink(const sp<AudioSink> &audioSink) {
 }
 
 status_t NuPlayerDriver::setParameter(
-        int /* key */, const Parcel & /* request */) {
+        int  key , const Parcel &  request ) {
+
+     //mtkadd+
+    if (key == KEY_PARAMETER_PLAYBACK_WHITELIST) {
+        int value = 0;
+        request.readInt32(&value);
+        bool isWhitePlayback = (value == 1) ? true:false;
+        if (mPlayer != NULL) {
+             mPlayer->setIsWhitePlayback(isWhitePlayback);
+        }
+        return OK;
+    }
+#ifdef MTK_DRM_APP
+    if (key == KEY_PARAMETER_DRM_CLIENT_PROC) {
+        mPlayer->setDRMClientInfo(&request);
+        return OK;
+    }
+#endif
     return INVALID_OPERATION;
 }
 

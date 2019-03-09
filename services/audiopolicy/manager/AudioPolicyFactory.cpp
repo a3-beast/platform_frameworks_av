@@ -18,14 +18,20 @@
 
 namespace android {
 
+AudioPolicyManagerCustomInterface* audiopolicymanagerMTK = NULL;  // MTK_AUDIO
+
 extern "C" AudioPolicyInterface* createAudioPolicyManager(
         AudioPolicyClientInterface *clientInterface)
 {
-    return new AudioPolicyManager(clientInterface);
+    audiopolicymanagerMTK = (AudioPolicyManagerCustomInterface*) new AudioPolicyManagerCustomImpl();  // MTK_AUDIO
+    return new AudioPolicyManager(clientInterface, audiopolicymanagerMTK);
 }
 
 extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface)
 {
+    if (audiopolicymanagerMTK != NULL) {    // MTK_AUDIO
+        delete audiopolicymanagerMTK;
+    }
     delete interface;
 }
 

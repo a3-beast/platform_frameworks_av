@@ -593,6 +593,11 @@ protected:
                 };
 
                 SimpleLog mLocalLog;
+
+//MTK_AUDIO_FIX_DEFAULT_DEFECT> // ALPS03762573 : music seek
+public:
+    volatile int32_t mFlushShareBuffer[256];
+//MTK_AUDIO_FIX_DEFAULT_DEFECT>
 };
 
 class VolumeInterface {
@@ -1079,6 +1084,26 @@ protected:
                 // volumes last sent to audio HAL with stream->setVolume()
                 float mLeftVolFloat;
                 float mRightVolFloat;
+
+// <MTK_AUDIOMIXER_ENABLE_DRC
+public:
+    virtual     void        setDRCEnable(bool enable) = 0;
+
+protected:
+    virtual     void        releaseTrackDrc_l(int name) = 0;
+// MTK_AUDIOMIXER_ENABLE_DRC>
+
+private:
+// <MTK_AUDIO_DEBUG
+    bool        mWriteMutedData;       // Whether write muted data to HAL.
+    int         mWriteMutedDataCount;  // The frame count of muted data.
+// MTK_AUDIO_DEBUG>
+// <MTK_AUDIOMIXER_ENABLE_DRC
+    audio_devices_t mOutputDevice;
+    String8 mCustomScene;
+    bool mUpdateACFHCFParam;
+    bool mUpdateCustomSceneParam;
+// MTK_AUDIOMIXER_ENABLE_DRC>
 };
 
 class MixerThread : public PlaybackThread {
@@ -1163,6 +1188,14 @@ protected:
                 // Blending with limiter is not idempotent,
                 // and blending without limiter is idempotent but inefficient to do twice.
     virtual     bool       requireMonoBlend() { return mMasterMono.load() && !hasFastMixer(); }
+
+// <MTK_AUDIOMIXER_ENABLE_DRC
+public:
+    virtual     void        setDRCEnable(bool enable);
+
+protected:
+    virtual     void        releaseTrackDrc_l(int name);
+// MTK_AUDIOMIXER_ENABLE_DRC>
 };
 
 class DirectOutputThread : public PlaybackThread {
@@ -1209,6 +1242,14 @@ public:
     virtual     bool        hasFastMixer() const { return false; }
 
     virtual     int64_t     computeWaitTimeNs_l() const override;
+
+// <MTK_AUDIOMIXER_ENABLE_DRC
+public:
+    virtual     void        setDRCEnable(bool enable);
+
+protected:
+    virtual     void        releaseTrackDrc_l(int name);
+// MTK_AUDIOMIXER_ENABLE_DRC>
 };
 
 class OffloadThread : public DirectOutputThread {
@@ -1277,14 +1318,16 @@ private:
 
 class DuplicatingThread : public MixerThread {
 public:
-    DuplicatingThread(const sp<AudioFlinger>& audioFlinger, MixerThread* mainThread,
-                      audio_io_handle_t id, bool systemReady);
-    virtual                 ~DuplicatingThread();
+//<MTK_AUDIO_FIX_DEFAULT_DEFECT
 
+    DuplicatingThread(const sp<AudioFlinger>& audioFlinger, MixerThread* mainThread,
+                      audio_io_handle_t id, bool systemReady, uint32_t latency=0);
+    virtual                 ~DuplicatingThread();
+                void        addOutputTrack(MixerThread* thread, uint32_t latency=0);
+//MTK_AUDIO_FIX_DEFAULT_DEFECT>
     // Thread virtuals
     virtual     void        dumpInternals(int fd, const Vector<String16>& args) override;
 
-                void        addOutputTrack(MixerThread* thread);
                 void        removeOutputTrack(MixerThread* thread);
                 uint32_t    waitTimeMs() const { return mWaitTimeMs; }
 

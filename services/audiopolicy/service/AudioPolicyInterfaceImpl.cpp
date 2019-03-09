@@ -16,6 +16,11 @@
 
 #define LOG_TAG "AudioPolicyIntefaceImpl"
 //#define LOG_NDEBUG 0
+#if defined(MTK_AUDIO_DEBUG)
+#if defined(CONFIG_MT_ENG_BUILD) || defined(CONFIG_MT_USERDEBUG_BUILD)
+#define LOG_NDEBUG 0
+#endif
+#endif
 
 #include <utils/Log.h>
 #include <media/MediaAnalyticsItem.h>
@@ -47,6 +52,9 @@ status_t AudioPolicyService::setDeviceConnectionState(audio_devices_t device,
 
     ALOGV("setDeviceConnectionState()");
     Mutex::Autolock _l(mLock);
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)   // ALPS03743535
+    Mutex::Autolock _ldevconn(mMTKDeviceConnectionLock);
+#endif
     AutoCallerClear acc;
     return mAudioPolicyManager->setDeviceConnectionState(device, state,
                                                          device_address, device_name);
@@ -59,6 +67,9 @@ audio_policy_dev_state_t AudioPolicyService::getDeviceConnectionState(
     if (mAudioPolicyManager == NULL) {
         return AUDIO_POLICY_DEVICE_STATE_UNAVAILABLE;
     }
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)   // ALPS03743535. when disconnecting device, access null because of mAvailableOutputDevices.remove
+    Mutex::Autolock _ldevconn(mMTKDeviceConnectionLock);
+#endif
     AutoCallerClear acc;
     return mAudioPolicyManager->getDeviceConnectionState(device,
                                                       device_address);
@@ -105,6 +116,9 @@ status_t AudioPolicyService::setPhoneState(audio_mode_t state)
 
     AutoCallerClear acc;
     mAudioPolicyManager->setPhoneState(state);
+#if defined(MTK_AUDIO_DEBUG)
+    ALOGV("setPhoneState() Done: Mode [%d] -> Mode [%d]", mPhoneState, state);
+#endif
     mPhoneState = state;
     return NO_ERROR;
 }
@@ -1001,6 +1015,21 @@ status_t AudioPolicyService::getMasterMono(bool *mono)
 }
 
 
+status_t AudioPolicyService::setPolicyManagerParameters(int par1, int par2, int par3, int par4)
+{
+#if defined(MTK_AUDIO)
+    if (mAudioPolicyManager == NULL) {
+        return NO_INIT;
+    }
+    Mutex::Autolock _l(mLock);
+    return mAudioPolicyManager->setPolicyManagerParameters(par1, par2, par3, par4);
+#else
+    ALOGW("%s unsupport, par1 0x%x par2 0x%x par3 0x%x par4 0x%x", __FUNCTION__, par1, par2, par3, par4);
+    return INVALID_OPERATION;
+#endif
+}
+
+
 float AudioPolicyService::getStreamVolumeDB(
             audio_stream_type_t stream, int index, audio_devices_t device)
 {
@@ -1036,4 +1065,96 @@ status_t AudioPolicyService::setSurroundFormatEnabled(audio_format_t audioFormat
     return mAudioPolicyManager->setSurroundFormatEnabled(audioFormat, enabled);
 }
 
+//<MTK_AUDIO_ADD
+status_t AudioPolicyService::startOutputSamplerate(audio_io_handle_t output, audio_stream_type_t stream, audio_session_t session, int samplerate)
+{
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    if (uint32_t(stream) >= AUDIO_STREAM_CNT) {
+        return BAD_VALUE;
+    }
+
+    if (mAudioPolicyManager == NULL) {
+        return NO_INIT;
+    }
+    ALOGV("startOutputSamplerate()");
+    sp<AudioPolicyEffects>audioPolicyEffects;
+    {
+        Mutex::Autolock _l(mLock);
+        audioPolicyEffects = mAudioPolicyEffects;
+    }
+    if (audioPolicyEffects != 0) {
+        // create audio processors according to stream
+        status_t status = audioPolicyEffects->addOutputSessionEffects(output, stream, session);
+        if (status != NO_ERROR && status != ALREADY_EXISTS) {
+            ALOGW("Failed to add effects on session %d", session);
+        }
+    }
+    Mutex::Autolock _l(mLock);
+    return mAudioPolicyManager->startOutputSamplerate(output, stream, session, samplerate);
+#else
+    (void) output;
+    (void) stream;
+    (void) session;
+    (void) samplerate;
+    ALOGE("%s Unsupport Function", __FUNCTION__);
+    return INVALID_OPERATION;
+#endif
+}
+status_t AudioPolicyService::stopOutputSamplerate(audio_io_handle_t output,
+                                        audio_stream_type_t stream,
+                                        audio_session_t session,
+                                        int samplerate)
+{
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    if (uint32_t(stream) >= AUDIO_STREAM_CNT) {
+        return BAD_VALUE;
+    }
+
+    if (mAudioPolicyManager == NULL) {
+        return NO_INIT;
+    }
+    ALOGV("stopOutputSamplerate()");
+    mOutputCommandThread->stopOutputSamplerateCommand(output, stream, session, samplerate);
+    return NO_ERROR;
+#else
+    (void) output;
+    (void) stream;
+    (void) session;
+    (void) samplerate;
+    ALOGE("%s Unsupport Function", __FUNCTION__);
+    return 0;
+#endif
+}
+
+status_t  AudioPolicyService::doStopOutputSamplerate(audio_io_handle_t output,
+                                      audio_stream_type_t stream,
+                                      audio_session_t session,
+                                      int samplerate)
+{
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    ALOGV("doStopOutputSamplerate from tid %d", gettid());
+    sp<AudioPolicyEffects>audioPolicyEffects;
+    {
+        Mutex::Autolock _l(mLock);
+        audioPolicyEffects = mAudioPolicyEffects;
+    }
+    if (audioPolicyEffects != 0) {
+        // release audio processors from the stream
+        status_t status = audioPolicyEffects->releaseOutputSessionEffects(output, stream, session);
+        if (status != NO_ERROR && status != ALREADY_EXISTS) {
+            ALOGW("Failed to release effects on session %d", session);
+        }
+    }
+    Mutex::Autolock _l(mLock);
+    return mAudioPolicyManager->stopOutputSamplerate(output, stream, session, samplerate);
+#else
+    (void) output;
+    (void) stream;
+    (void) session;
+    (void) samplerate;
+    ALOGE("%s Unsupport Function", __FUNCTION__);
+    return 0;
+#endif
+}
+//MTK_AUDIO_ADD>
 } // namespace android

@@ -189,6 +189,11 @@ void NuPlayer::Decoder::onMessageReceived(const sp<AMessage> &msg) {
                     ALOGE("Decoder (%s) reported error : 0x%x",
                             mIsAudio ? "audio" : "video", err);
 
+                    //mtkadd
+                    if (mIsAudio) {
+                        mRenderer->setAudioDecoderError(true);
+                    }
+
                     handleError(err);
                     break;
                 }
@@ -310,6 +315,10 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     if (mCodec == NULL) {
         ALOGE("Failed to create %s%s decoder",
                 (secure ? "secure " : ""), mime.c_str());
+        // mtkadd: tell mRenderer audio decoder error
+        if (mIsAudio) {
+            mRenderer->setAudioDecoderError(true);
+        }
         handleError(UNKNOWN_ERROR);
         return;
     }
@@ -384,6 +393,19 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
 
     mPaused = false;
     mResumePending = false;
+
+     //mtkadd
+    if (!strcmp(mComponentName.c_str(), "OMX.MTK.AUDIO.DECODER.MP3")) {
+        int mtkMp3Codec = 0;
+        if (format->findInt32("mtkMp3Codec", &mtkMp3Codec)) {
+            sp<MetaData> meta = new MetaData;
+            if (meta != NULL) {
+                meta->setInt32(kKeyMtkMP3Power, 1);
+                mSource->setVendorMeta(true/*audio*/, meta);
+            }
+        }
+    }
+
 }
 
 void NuPlayer::Decoder::onSetParameters(const sp<AMessage> &params) {
@@ -671,8 +693,9 @@ bool NuPlayer::Decoder::handleAnInputBuffer(size_t index) {
         mMediaBuffers.editItemAt(index) = NULL;
     }
     mInputBufferIsDequeued.editItemAt(index) = true;
-
-    if (!mCSDsToSubmit.isEmpty()) {
+    // mtk change: vorbis decoder not support csd resubmit
+    if (!mCSDsToSubmit.isEmpty()
+            && strcmp("OMX.google.vorbis.decoder", mComponentName.c_str())) {
         sp<AMessage> msg = new AMessage();
         msg->setSize("buffer-ix", index);
 
@@ -1031,6 +1054,36 @@ bool NuPlayer::Decoder::onInputBufferFetched(const sp<AMessage> &msg) {
                 ALOGI("[%s] suppressing rendering until %lld us",
                         mComponentName.c_str(), (long long)resumeAtMediaTimeUs);
                 mSkipRenderingUntilMediaTimeUs = resumeAtMediaTimeUs;
+            }
+#ifdef MTK_AUDIO_APE_SUPPORT
+            int32_t newframe =0; //for ape seek
+            int32_t firstbyte =0;
+            if (extra->findInt32("nwfrm", &newframe))
+            {
+                ALOGI("APE nwfrm found :%d line:%d",(int)newframe,__LINE__);
+            }
+            if (extra->findInt32("sekbyte", &firstbyte))
+            {
+                ALOGI("APE sekbyte found :%d line:%d",(int)firstbyte,__LINE__);
+            }
+            if (newframe != 0 || firstbyte !=0)
+            {
+                sp<AMessage> msg = new AMessage;
+                msg->setInt32("nwfrm", newframe);
+                msg->setInt32("sekbyte", firstbyte);
+                mCodec->setParameters(msg);
+            }
+#endif
+            //mtk add seekmode for ALPS03567323 AND ALPS03607769
+            int64_t seekTimeUsForDecoder = 0;
+            if (extra->findInt64(
+                        "decode-seekTime", &seekTimeUsForDecoder)) {
+                if (!mIsAudio && mCodec != NULL) {
+                    sp<AMessage> msg = new AMessage;
+                    msg->setInt64("seekTimeUs", seekTimeUsForDecoder);
+                    mCodec->setParameters(msg);
+                    ALOGI("set video decode seek time:%lld", (long long)seekTimeUsForDecoder);
+                }
             }
         }
 

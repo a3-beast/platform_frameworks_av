@@ -136,6 +136,9 @@ NuPlayer::Renderer::Renderer(
     CHECK(mediaClock != NULL);
     mPlaybackRate = mPlaybackSettings.mSpeed;
     mMediaClock->setPlaybackRate(mPlaybackRate);
+    mPadding = 0;         //mtk add for start & seek not smooth
+    mLastFrameAt = 0;     //mtk add for start & seek not smooth
+    mIsAudioDecoderErr = false;   //mtkadd for AudioDecoder error
 }
 
 NuPlayer::Renderer::~Renderer() {
@@ -1038,6 +1041,22 @@ bool NuPlayer::Renderer::onDrainAudioQueue() {
                 mAudioSink->stop();
                 mNumFramesWritten = 0;
             }
+            // mtk add for ALPS03480200, When seek to the end, playback will blocked. The reason
+            // is that mAnchorTimeMediaUs was updated when audio notifyEOS,return without updating
+            //mAnchorTimeMediaUs,in postDainVideoQueue the updateAnchor()can not be called,then
+            //neddRepostDrainVideoQueue is always true,then postDrainVideoQueue will always post
+            // but buffer not been consumed. Dead loop. Clear mAnchorTimeMediaUs to exit dead loop.
+            mAnchorTimeMediaUs = -1;
+
+            //mtkadd for ALPS04214770,when seek to end,audio is very short,so before Audio
+            //reach EOS,MediaClock's mAnchorTimeMediaUs can't be updated by onDraionAudioQueue().
+            //at this time,MediaClock's mAnchorTimeMediaUs=-1,
+            //mTimers's member can't be posted.and new video buffer can't be added to MediaClock.
+            int64_t nowMediaUs;
+            if (mMediaClock->getMediaTime(ALooper::GetNowUs(),&nowMediaUs) != OK) {
+                mMediaClock->notifyDoProcessTimers(&mAnchorTimeMediaUs);
+            }
+
             return false;
         }
 
@@ -1101,6 +1120,13 @@ bool NuPlayer::Renderer::onDrainAudioQueue() {
         }
 
         if (written != (ssize_t)copy) {
+            // @ M add for music NE +
+            // audiosink maybe already close because of unexpected decoder error
+            // NE flow:NuplayerDecoder notify err -> Nuplayerrender notify playback complete
+            // ->MediaplayerService setnextoutput->mAudioSink clear mTrack
+            // -> mAudioSink framesize() return err
+            if (mAudioSink->ready())
+            // @M add for music NE -
             // A short count was received from AudioSink::write()
             //
             // AudioSink write is called in non-blocking mode.
@@ -1195,12 +1221,36 @@ void NuPlayer::Renderer::onNewAudioMediaTime(int64_t mediaTimeUs) {
         AudioTimestamp ts;
         if (mAudioSink->getTimestamp(ts) == OK && ts.mPosition > 0) {
             mNextAudioClockUpdateTimeUs = 0; // start our clock updates
+            //mtk add for start & seek not smooth (1)
+            if (mHasVideo) {
+                // This is for start & seek not smooth issue.
+                // because before audioTrack start and can play pending audio data,video will play normally
+                //,so when audio data can be palyed,this one video frame will be early seriously,we will
+                //calculate the mPadding and add it to mediaclock->mAnchorMediaTimeUs
+                // count the mPadding value :FramePlayedAt - lastFramePlayedAt - mPosition/SampleRate
+                mPadding = (ts.mTime.tv_sec * 1000000LL + ts.mTime.tv_nsec / 1000)
+                  - mLastFrameAt - (int64_t)((int32_t)ts.mPosition  * 1000000LL / mCurrentPcmInfo.mSampleRate);
+                if (mPadding > 250 * 1000) {
+                    mPadding = 200 * 1000LL;
+                }
+            }
+        }
+        if (mHasVideo) {
+            // record last  framePlayedAt until ts.mPostion is not zero
+            mLastFrameAt = ts.mTime.tv_sec * 1000000LL + ts.mTime.tv_nsec / 1000;
         }
     }
     int64_t nowUs = ALooper::GetNowUs();
     if (mNextAudioClockUpdateTimeUs >= 0) {
         if (nowUs >= mNextAudioClockUpdateTimeUs) {
-            int64_t nowMediaUs = mediaTimeUs - getPendingAudioPlayoutDurationUs(nowUs);
+        //mtk add for start & seek not smooth (2)
+            int64_t nowMediaUs = 0;
+            if (mHasVideo) {
+                nowMediaUs = mPadding + mediaTimeUs - getPendingAudioPlayoutDurationUs(nowUs);
+            } else {
+                nowMediaUs = mediaTimeUs - getPendingAudioPlayoutDurationUs(nowUs);
+            }
+
             mMediaClock->updateAnchor(nowMediaUs, nowUs, mediaTimeUs);
             mUseVirtualAudioSink = false;
             mNextAudioClockUpdateTimeUs = nowUs + kMinimumAudioClockUpdatePeriodUs;
@@ -1280,7 +1330,10 @@ void NuPlayer::Renderer::postDrainVideoQueue() {
         }
     }
     mNextVideoTimeMediaUs = mediaTimeUs + 100000;
-    if (!mHasAudio) {
+    //mtkadd,some case because audio decoder error,then  render flush audio ,
+    //but video need continue,then add judge mNextAudioClockUpdateTimeUs == -1 case,
+    //if so,updateMaxTimeMedia,otherwise, will block at MediaClock's processTimers_l()->getMediaTime_l().
+    if (!mHasAudio || (getAudioDecoderError() && mNextAudioClockUpdateTimeUs == -1)) {
         // smooth out videos >= 10fps
         mMediaClock->updateMaxTimeMedia(mNextVideoTimeMediaUs);
     }
@@ -1332,7 +1385,7 @@ void NuPlayer::Renderer::onDrainVideoQueue() {
 
     if (!mPaused) {
         setVideoLateByUs(nowUs - realTimeUs);
-        tooLate = (mVideoLateByUs > 40000);
+        tooLate = (mVideoLateByUs > 250000);
 
         if (tooLate) {
             ALOGV("video late by %lld us (%.2f secs)",
@@ -1367,7 +1420,36 @@ void NuPlayer::Renderer::onDrainVideoQueue() {
         tooLate = false;
     }
 
+//   set AvSyncRefTime to video codec +
+    int64_t currentPositionUs;
+    if (getCurrentPosition(&currentPositionUs)!= OK) {
+        currentPositionUs = 0;
+    }
+    entry->mBuffer->meta()->setInt64("AvSyncRefTimeUs", currentPositionUs);
+//   set AvSyncRefTime to video codec -
     entry->mNotifyConsumed->setInt64("timestampNs", realTimeUs * 1000ll);
+
+     /**************************************/
+    //mtk add drop one frame, show one frame
+    CHECK(entry->mBuffer->meta()->findInt64("timeUs", &mediaTimeUs));
+    static int32_t SinceLastDropped = 0;
+    if(tooLate)
+    {
+        if (SinceLastDropped > 0)
+        {
+            //drop
+            ALOGE("we're late dropping one timeUs %lld ms after %d frames",mediaTimeUs/1000ll,SinceLastDropped);
+            SinceLastDropped = 0;
+        }else{
+            //not drop
+            tooLate = false;
+            SinceLastDropped ++;
+        }
+    }else{
+        SinceLastDropped ++;
+    }
+    /**************************************/
+
     entry->mNotifyConsumed->setInt32("render", !tooLate);
     entry->mNotifyConsumed->post();
     mVideoQueue.erase(mVideoQueue.begin());
@@ -1604,6 +1686,10 @@ void NuPlayer::Renderer::onFlush(const sp<AMessage> &msg) {
 
         mDrainAudioQueuePending = false;
 
+        //mtkadd
+        if (getAudioDecoderError())
+            mMediaClock->notifyDoProcessTimers(&mAnchorTimeMediaUs);
+
         if (offloadingAudio()) {
             mAudioSink->pause();
             mAudioSink->flush();
@@ -1625,6 +1711,9 @@ void NuPlayer::Renderer::onFlush(const sp<AMessage> &msg) {
         mNextAudioClockUpdateTimeUs = -1;
     } else {
         flushQueue(&mVideoQueue);
+
+        //mtkadd
+        mMediaClock->clearTimers();
 
         mDrainVideoQueuePending = false;
 
@@ -2011,11 +2100,22 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
         // We should always be able to set our playback settings if the sink is closed.
         LOG_ALWAYS_FATAL_IF(mAudioSink->setPlaybackRate(mPlaybackSettings) != OK,
                 "onOpenAudioSink: can't set playback rate on closed sink");
+
+        // mtk add for supporting 24bit high resolution audio feature
+        audio_format_t audioFormat = AUDIO_FORMAT_PCM_16_BIT;
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+        int32_t bitWidth = 0;
+        if (format->findInt32("bit-width", &bitWidth) && bitWidth > 16) {
+            ALOGI("bits width: %d, NuPlayer use high resolution audiotrack.", bitWidth);
+            audioFormat = AUDIO_FORMAT_PCM_8_24_BIT;
+        }
+#endif
         status_t err = mAudioSink->open(
                     sampleRate,
                     numChannels,
                     (audio_channel_mask_t)channelMask,
-                    AUDIO_FORMAT_PCM_16_BIT,
+                    //AUDIO_FORMAT_PCM_16_BIT,
+                    audioFormat, // mtk change for 24 bit audio feature
                     0 /* bufferCount - unused */,
                     mUseAudioCallback ? &NuPlayer::Renderer::AudioSinkCallback : NULL,
                     mUseAudioCallback ? this : NULL,

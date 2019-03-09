@@ -236,6 +236,11 @@ public:
      */
     static bool isLogicalCamera(const CameraMetadata& staticInfo,
             std::vector<std::string>* physicalCameraIds);
+//!++
+public:
+    status_t getProperty(String8 const& key, String8& value);
+    status_t setProperty(String8 const& key, String8 const& value);
+//!--
 
 private:
     // All private members, unless otherwise noted, expect mInterfaceMutex to be locked before use
@@ -245,6 +250,11 @@ private:
     mutable std::mutex mStatusListenerMutex;
     wp<StatusListener> mListener;
     ServiceInteractionProxy* mServiceProxy;
+
+//!++ fixed google issue: the patch is from google, the offical patch will apply in Android Q
+    // mProviderLifecycleLock is locked during onRegistration and removeProvider
+    mutable std::mutex mProviderLifecycleLock;
+//!--
 
     static HardwareServiceInteractionProxy sHardwareServiceInteractionProxy;
 

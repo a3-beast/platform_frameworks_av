@@ -506,6 +506,20 @@ OMX_ERRORTYPE SoftVideoDecoderOMXComponent::internalSetParameter(
                 ALOGE("b/22885421");
                 return OMX_ErrorBadParameter;
             }
+
+            // 20150126 Marcus Huang: Fix ALPS01919422; limits the max width/height
+            //@Vdec_drv_if_public.c
+            //  DEC_MAX_WIDTH = 1920;
+            //  DEC_MAX_HEIGHT = 1088;
+#define MAX_SUPPORT_WIDTH 1920
+#define MAX_SUPPORT_HEIGHT 1088
+            // do not add small resolution condition here or CTS case fail,
+            // (VideoEncoderTest), the orginal issue that thumbnail NE is fixed
+            // in StagefrightMetadataRetriever
+            if ((newWidth * newHeight) > (MAX_SUPPORT_WIDTH * MAX_SUPPORT_HEIGHT)) {
+                ALOGE("frame size is not supported (%d x %d)", newWidth, newHeight);
+                return OMX_ErrorUnsupportedSetting;
+            }
             if (newWidth != oldWidth || newHeight != oldHeight) {
                 bool outputPort = (newParams->nPortIndex == kOutputPortIndex);
                 if (outputPort) {

@@ -36,6 +36,9 @@
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MetaData.h>
 #include <utils/String8.h>
+//#mtkadd+ for mp3 lowpower
+#include "mtkext/MtkMP3ExtractorExt.h"
+#define MULTI_FRAME 20
 
 namespace android {
 
@@ -209,7 +212,7 @@ static bool Resync(
     return valid;
 }
 
-class MP3Source : public MediaTrack {
+class MP3Source : public MediaTrack, public MtkMP3Toc {
 public:
     MP3Source(
             MetaDataBase &meta, DataSourceBase *source,
@@ -223,6 +226,9 @@ public:
 
     virtual status_t read(
             MediaBufferBase **buffer, const ReadOptions *options = NULL);
+
+    virtual status_t setVendorMeta(const sp<MetaData> & meta);
+    virtual status_t stopTocThreadIfTocEnabled();
 
 protected:
     virtual ~MP3Source();
@@ -244,6 +250,13 @@ private:
 
     MP3Source(const MP3Source &);
     MP3Source &operator=(const MP3Source &);
+
+    //mtkadd+
+     bool mUseMultiRead;
+     bool mUseMultiBuffer;
+    //mtk add for TOC thread
+    bool mEnableTOC;
+
 };
 
 struct Mp3Meta {
@@ -345,8 +358,12 @@ MP3Extractor::MP3Extractor(
     mMeta.setInt32(kKeyBitRate, bitrate * 1000);
     mMeta.setInt32(kKeyChannelCount, num_channels);
 
+#if 1
+    //mtkadd to calculate file duration,because google default duration maybe not so accurate.
+    //mtk firstly calculate part frames's average bitrate.then calculate duration.
+    getGeneralDuration(bitrate, mDataSource, mSeeker, &mMeta, mFirstFramePos, mFixedHeader);
     int64_t durationUs;
-
+#else
     if (mSeeker == NULL || !mSeeker->getDuration(&durationUs)) {
         off64_t fileSize;
         if (mDataSource->getSize(&fileSize) == OK) {
@@ -364,6 +381,16 @@ MP3Extractor::MP3Extractor(
 
     if (durationUs >= 0) {
         mMeta.setInt64(kKeyDuration, durationUs);
+    }
+#endif
+
+    //mtkadd+
+    if (!(mDataSource->flags() & DataSourceBase::kIsCachingDataSource) &&
+            !(mSeeker != NULL && mSeeker->getDuration(&durationUs))) {
+        if (isJointStereoMp3(mDataSource, mFirstFramePos, mFixedHeader)) {
+            //temp solution for joint_stereo
+            mMeta.setInt32(kKeyChannelCount, 1);
+        }
     }
 
     mInitCheck = OK;
@@ -422,10 +449,17 @@ MediaTrack *MP3Extractor::getTrack(size_t index) {
 
 status_t MP3Extractor::getTrackMetaData(
         MetaDataBase &meta,
-        size_t index, uint32_t /* flags */) {
+        size_t index, uint32_t  flags ) {
     if (mInitCheck != OK || index != 0) {
         return UNKNOWN_ERROR;
     }
+
+    //mtk add for low power
+    if(flags == kIncludeMp3LowPowerInfo) {
+         mMeta.setInt32(kKeyMp3MultiRead, 1);
+         ALOGD("Set mp3 low power flag");
+     }
+
     meta = mMeta;
     return OK;
 }
@@ -443,7 +477,8 @@ MP3Source::MP3Source(
         MetaDataBase &meta, DataSourceBase *source,
         off64_t first_frame_pos, uint32_t fixed_header,
         MP3Seeker *seeker)
-    : mMeta(meta),
+    : MtkMP3Toc(source, fixed_header),
+      mMeta(meta),
       mDataSource(source),
       mFirstFramePos(first_frame_pos),
       mFixedHeader(fixed_header),
@@ -454,11 +489,34 @@ MP3Source::MP3Source(
       mGroup(NULL),
       mBasisTimeUs(0),
       mSamplesRead(0) {
+
+    //mtkadd+
+    mUseMultiRead = false;
+    mUseMultiBuffer = false;
+    mEnableTOC = false;
+
+    int32_t isMtkMusic = 0;
+    if (mMeta.findInt32(kKeyMp3MultiRead, &isMtkMusic) && (isMtkMusic == 1)) {
+        mMeta.setInt32(kKeyMP3Extractor, 1);
+        mUseMultiBuffer = true;
+
+        //toc enabled in music app & mtk omx component.
+        if (mDataSource->flags() & DataSourceBase::kIsCachingDataSource) {
+            mEnableTOC = false;
+        } else {
+            mEnableTOC = true;
+        }
+
+    }
+
 }
 
 MP3Source::~MP3Source() {
     if (mStarted) {
         stop();
+        //mtkadd+
+        mUseMultiRead = false;
+        mUseMultiBuffer = false;
     }
 }
 
@@ -466,8 +524,12 @@ status_t MP3Source::start(MetaDataBase *) {
     CHECK(!mStarted);
 
     mGroup = new MediaBufferGroup;
-
-    mGroup->add_buffer(MediaBufferBase::Create(kMaxFrameSize));
+    //mtkadd+
+    if (mUseMultiBuffer) {
+        mGroup->add_buffer(MediaBufferBase::Create(kMaxFrameSize * MULTI_FRAME));
+    } else {
+        mGroup->add_buffer(MediaBufferBase::Create(kMaxFrameSize));
+    }
 
     mCurrentPos = mFirstFramePos;
     mCurrentTimeUs = 0;
@@ -476,6 +538,10 @@ status_t MP3Source::start(MetaDataBase *) {
     mSamplesRead = 0;
 
     mStarted = true;
+    //mtkadd start TOC
+    if(mEnableTOC){
+        startTOCThread(mFirstFramePos);
+    }
 
     return OK;
 }
@@ -487,11 +553,22 @@ status_t MP3Source::stop() {
     mGroup = NULL;
 
     mStarted = false;
+    //mtkadd stop toc
+    if (mEnableTOC) {
+        stopTOCThread();
+    }
 
     return OK;
 }
 
 status_t MP3Source::getFormat(MetaDataBase &meta) {
+    //mtkadd to update duration
+    int64_t durationUsByTOC = getTocDuration();
+    int64_t duration;
+    if(durationUsByTOC != -1 && mMeta.findInt64(kKeyDuration, &duration) && duration != durationUsByTOC) {
+         mMeta.setInt64(kKeyDuration,durationUsByTOC);
+         ALOGI("update kKeyDuration from %lld to %lld",(long long)duration,(long long)durationUsByTOC);
+    }
     meta = mMeta;
     return OK;
 }
@@ -506,8 +583,29 @@ status_t MP3Source::read(
 
     if (options != NULL && options->getSeekTo(&seekTimeUs, &mode)) {
         int64_t actualSeekTimeUs = seekTimeUs;
-        if (mSeeker == NULL
-                || !mSeeker->getOffsetForTime(&actualSeekTimeUs, &mCurrentPos)) {
+
+        //mtkadd for TOC
+        status_t tocerr = BAD_VALUE;
+        if (mEnableTOC) {
+            int64_t durationUsByTOC = getTocDuration();
+            if ((durationUsByTOC != -1) && (seekTimeUs > durationUsByTOC)){
+                seekTimeUs = durationUsByTOC;
+                ALOGV("seekTimeUs change to duration when seekTimeUs > mDuration");
+            }
+            off64_t tocPos = 0;
+            int64_t tocTimeUs = 0;
+            tocerr = getFramePos(seekTimeUs, &tocTimeUs, &tocPos, false);
+            if (tocerr == ERROR_END_OF_STREAM) {
+                return ERROR_END_OF_STREAM;
+            } else if (tocerr != BAD_VALUE) {
+                actualSeekTimeUs = tocTimeUs;
+                mCurrentTimeUs = tocTimeUs;
+                mCurrentPos = tocPos;
+            }
+        }
+
+        if (tocerr == BAD_VALUE && (mSeeker == NULL
+                || !mSeeker->getOffsetForTime(&actualSeekTimeUs, &mCurrentPos))) {
             int32_t bitrate;
             if (!mMeta.findInt32(kKeyBitRate, &bitrate)) {
                 // bitrate is in bits/sec.
@@ -538,6 +636,17 @@ status_t MP3Source::read(
     int num_samples;
     int sample_rate;
     for (;;) {
+        //mtkadd+ for multframe read
+        if((!(mDataSource->flags() & DataSourceBase::kIsCachingDataSource)) && mUseMultiRead == true) {
+            int m = MtkMP3SourceExt::getMultiFrameSize(mDataSource, mCurrentPos,
+                    mFixedHeader, &frame_size, &num_samples, &sample_rate, MULTI_FRAME);
+            if (m > 1){
+                break;
+            } else {
+                ALOGV("need Resync m %d", m);
+            }
+        }
+
         ssize_t n = mDataSource->readAt(mCurrentPos, buffer->data(), 4);
         if (n < 4) {
             buffer->release();
@@ -603,6 +712,25 @@ status_t MP3Source::read(
     *out = buffer;
 
     return OK;
+}
+
+status_t MP3Source::setVendorMeta(const sp<MetaData> & meta)
+{
+    int32_t mtkCodec = 0;
+    if (meta != NULL && meta->findInt32(kKeyMtkMP3Power, &mtkCodec)) {
+        ALOGV("mtkMp3Codec MultiFrames %d", mtkCodec);
+        mUseMultiRead = mUseMultiBuffer && !!mtkCodec;
+    }
+
+    return OK;
+}
+
+status_t  MP3Source::stopTocThreadIfTocEnabled() {
+    if (mEnableTOC) {
+        stopTOCThread();
+        return NO_ERROR;
+    }
+    return MEDIA_ERROR_BASE;
 }
 
 status_t MP3Extractor::getMetaData(MetaDataBase &meta) {

@@ -29,6 +29,10 @@
 
 #include <system/audio.h>
 
+#if defined(MTK_AUDIO)
+#include <media/AudioParameter.h>
+#include <AudioPolicyParameters.h>
+#endif
 // ----------------------------------------------------------------------------
 
 namespace android {
@@ -41,6 +45,35 @@ sp<AudioSystem::AudioFlingerClient> AudioSystem::gAudioFlingerClient;
 audio_error_callback AudioSystem::gAudioErrorCallback = NULL;
 dynamic_policy_callback AudioSystem::gDynPolicyCallback = NULL;
 record_config_callback AudioSystem::gRecordConfigCallback = NULL;
+#if defined(MTK_FM_SUPPORT)
+static const char* keySetFmPreStop = "AudioFmPreStop";
+static String8 keyFmPreStop =String8(keySetFmPreStop);
+#endif
+#if defined(MTK_TTY_SUPPORT)
+static const char* keySetTtyModeChar = "tty_mode";
+static String8 keySetTtyMode = String8(keySetTtyModeChar);
+enum tty_mode_t {
+    AUD_TTY_OFF  =  0,
+    AUD_TTY_FULL =  1,
+    AUD_TTY_VCO  =  2,
+    AUD_TTY_HCO  =  4,
+    AUD_TTY_ERR  = -1
+};
+#endif
+#if defined(MTK_AUDIO_GAIN)
+static const char* keySetReloadAudioVolumeSetting = "ReloadAudioVolume";
+static String8 keyReloadAudioVolume = String8(keySetReloadAudioVolumeSetting);
+static const char* keySetAudioCustomSceneChar = "SetAudioCustomScene";
+static String8 keySetAudioCustomSceneString = String8(keySetAudioCustomSceneChar);
+#endif
+
+#if defined(MTK_HAC_SUPPORT)
+static const char* keyHACSetting = "HACSetting";
+static String8 keySET_HAC_ENABLE = String8(keyHACSetting);
+#endif
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+static String8 keyhifi_dac = String8("hifi_dac");
+#endif
 
 // establish binder interface to AudioFlinger service
 const sp<IAudioFlinger> AudioSystem::get_audio_flinger()
@@ -207,9 +240,97 @@ status_t AudioSystem::setMode(audio_mode_t mode)
 
 status_t AudioSystem::setParameters(audio_io_handle_t ioHandle, const String8& keyValuePairs)
 {
+#if defined(MTK_AUDIO)
+    status_t ret = NO_ERROR;
+#endif
+#if defined(MTK_AUDIO)
+    ALOGD("+setParameters(): %s ", keyValuePairs.string());
+    String8 value_str;
+    AudioParameter param = AudioParameter(keyValuePairs);
+#endif
+#if defined(MTK_FM_SUPPORT)
+    int value = 0;
+    if (param.getInt(keyFmPreStop, value) == NO_ERROR) {
+        const sp<IAudioPolicyService>& aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            aps->setPolicyManagerParameters (POLICY_SET_FM_PRESTOP, value, 0, 0);
+        }
+    }
+#endif
+
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    if (param.get(keyhifi_dac, value_str) == NO_ERROR) {
+        const sp<IAudioPolicyService> &aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            if (value_str == "on") {
+                ret = aps->setPolicyManagerParameters(POLICY_SET_HIFI_STATE, 1, 0, 0);
+            } else if (value_str == "off") {
+                ret = aps->setPolicyManagerParameters(POLICY_SET_HIFI_STATE, 0, 0, 0);
+            } else {
+                ALOGD("setParameters hifi_dac mode error!! set off by default");
+                ret = aps->setPolicyManagerParameters(POLICY_SET_HIFI_STATE, 0, 0, 0);
+            }
+            return ret;
+        }
+    }
+#endif
     const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+#if defined(MTK_AUDIO)
+    if (af == 0) return PERMISSION_DENIED;
+    ret = af->setParameters(ioHandle, keyValuePairs);
+#else
     if (af == 0) return PERMISSION_DENIED;
     return af->setParameters(ioHandle, keyValuePairs);
+#endif
+#if defined(MTK_AUDIO_GAIN)
+    if (param.get(keyReloadAudioVolume, value_str) == NO_ERROR) {
+        const sp<IAudioPolicyService>& aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            aps->setPolicyManagerParameters(POLICY_LOAD_VOLUME, 0, 0, 0);
+        }
+    }
+    if (param.get(keySetAudioCustomSceneString, value_str) == NO_ERROR) {
+        const sp<IAudioPolicyService>& aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            aps->setPolicyManagerParameters(POLICY_SET_SCENE_GAIN, 0, 0, 0);
+        }
+    }
+
+#endif
+#if defined(MTK_HAC_SUPPORT)
+    if (param.get(keySET_HAC_ENABLE, value_str) == NO_ERROR) {
+        const sp<IAudioPolicyService>& aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            aps->setPolicyManagerParameters(POLICY_LOAD_VOLUME, 0, 0, 0);
+        }
+    }
+#endif
+#if defined(MTK_TTY_SUPPORT)
+    if (param.get(keySetTtyMode, value_str) == NO_ERROR) {
+        tty_mode_t tty_mode;
+        if (value_str == "tty_full") {
+            tty_mode = AUD_TTY_FULL;
+        } else if (value_str == "tty_vco") {
+            tty_mode = AUD_TTY_VCO;
+        } else if (value_str == "tty_hco") {
+            tty_mode = AUD_TTY_HCO;
+        } else if (value_str == "tty_off") {
+            tty_mode = AUD_TTY_OFF;
+        } else {
+            ALOGD("setParameters tty_mode error !!");
+            tty_mode = AUD_TTY_ERR;
+        }
+
+        const sp<IAudioPolicyService>& aps = AudioSystem::get_audio_policy_service();
+        if (aps != 0) {
+            ALOGD("Send POLICY_SET_TTY_MODE");
+            aps->setPolicyManagerParameters (POLICY_SET_TTY_MODE, tty_mode, 0, 0);
+        }
+    }
+#endif
+#if defined(MTK_AUDIO)
+    return ret;
+#endif
 }
 
 String8 AudioSystem::getParameters(audio_io_handle_t ioHandle, const String8& keys)
@@ -1399,4 +1520,31 @@ void AudioSystem::AudioPolicyServiceClient::binderDied(const wp<IBinder>& who __
     ALOGW("AudioPolicyService server died!");
 }
 
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+status_t AudioSystem::startOutputSamplerate(audio_io_handle_t output, audio_stream_type_t stream, audio_session_t session , int samplerate)
+#else
+status_t AudioSystem::startOutputSamplerate(audio_io_handle_t output __unused, audio_stream_type_t stream __unused, audio_session_t session __unused , int samplerate __unused)
+#endif
+{
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    const sp<IAudioPolicyService> &aps = AudioSystem::get_audio_policy_service();
+    if (aps == 0) { return false; }
+    return aps->startOutputSamplerate(output,stream,session,samplerate);
+#endif
+    return OK;
+}
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+status_t AudioSystem::stopOutputSamplerate(audio_io_handle_t output, audio_stream_type_t stream, audio_session_t session , int samplerate)
+#else
+status_t AudioSystem::stopOutputSamplerate(audio_io_handle_t output __unused, audio_stream_type_t stream __unused, audio_session_t session __unused, int samplerate __unused)
+#endif
+{
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    const sp<IAudioPolicyService> &aps = AudioSystem::get_audio_policy_service();
+    if (aps == 0) { return false; }
+    return aps->stopOutputSamplerate(output,stream,session,samplerate);
+#endif
+
+    return OK;
+}
 } // namespace android

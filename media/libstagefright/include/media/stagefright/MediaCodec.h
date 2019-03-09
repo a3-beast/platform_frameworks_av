@@ -58,6 +58,9 @@ using hardware::cas::native::V1_0::IDescrambler;
 struct MediaCodec : public AHandler {
     enum ConfigureFlags {
         CONFIGURE_FLAG_ENCODE   = 1,
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+        CONFIGURE_FLAG_ENABLE_THUMBNAIL_OPTIMIZATION = (0x1<<2),//thumbnail mode
+#endif
     };
 
     enum BufferFlags {
@@ -66,6 +69,7 @@ struct MediaCodec : public AHandler {
         BUFFER_FLAG_EOS           = 4,
         BUFFER_FLAG_PARTIAL_FRAME = 8,
         BUFFER_FLAG_MUXER_DATA    = 16,
+        BUFFER_FLAG_DUMMY       = 32, // add for WFD dummy nal
     };
 
     enum {
@@ -377,7 +381,7 @@ private:
 
     MediaCodec(const sp<ALooper> &looper, pid_t pid, uid_t uid);
 
-    static sp<CodecBase> GetCodecBase(const AString &name, const char *owner = nullptr);
+    static sp<CodecBase> GetCodecBase(const AString &name);
 
     static status_t PostAndAwaitResponse(
             const sp<AMessage> &msg, sp<AMessage> *response);

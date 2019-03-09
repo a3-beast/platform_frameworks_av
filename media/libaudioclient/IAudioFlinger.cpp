@@ -950,11 +950,9 @@ status_t BnAudioFlinger::onTransact(
         default:
             break;
     }
-
-    char timeCheckString[64];
-    snprintf(timeCheckString, sizeof(timeCheckString), "IAudioFlinger: %d", code);
-    TimeCheck check(timeCheckString);
-
+#if !defined(CONFIG_MT_ENG_BUILD) && !defined(CONFIG_MT_USERDEBUG_BUILD)
+    TimeCheck check("IAudioFlinger");
+#endif
     switch (code) {
         case CREATE_TRACK: {
             CHECK_INTERFACE(IAudioFlinger, data, reply);

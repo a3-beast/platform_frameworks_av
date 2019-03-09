@@ -29,6 +29,7 @@
 namespace android {
 
 class DecryptHandle;
+class DrmManagerClient;
 struct AnotherPacketSource;
 struct ARTSPController;
 class DataSource;
@@ -92,6 +93,9 @@ struct NuPlayer::GenericSource : public NuPlayer::Source,
             const uint8_t uuid[16], const Vector<uint8_t> &drmSessionId, sp<ICrypto> *outCrypto);
 
     virtual status_t releaseDrm();
+
+    //mtk add
+    virtual status_t setVendorMeta(bool audio, const sp<MetaData> & meta);
 
 
 protected:
@@ -239,6 +243,30 @@ private:
     status_t checkDrmInfo();
 
     DISALLOW_EVIL_CONSTRUCTORS(GenericSource);
+
+// add for mtk
+public:
+    bool mIsCurrentComplete;   // OMA DRM v1 implementation
+    String8 mDrmProcName;
+    void setDRMClientInfo(const Parcel *request){mDrmProcName = request->readString8();};
+private:
+    // add for OMA DRM v1 implementation
+    DrmManagerClient *mDrmManagerClient;
+    sp<DecryptHandle> mDecryptHandle;
+//    void checkDrmStatus(const sp<DataSource>& dataSource);
+    void setDrmPlaybackStatusIfNeeded(int playbackStatus, int64_t position);
+
+    // add for TS
+    bool isTS();
+// end of add for mtk
+
+//mtkadd+ for mp3 lowpower
+public:
+    virtual void setParams(const sp<MetaData>& meta);
+private:
+    int mIsMtkMusic;
+    void init();
+
 };
 
 }  // namespace android

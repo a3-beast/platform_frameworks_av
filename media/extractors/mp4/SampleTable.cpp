@@ -374,7 +374,7 @@ status_t SampleTable::setSampleSizeParams(
 }
 
 status_t SampleTable::setTimeToSampleParams(
-        off64_t data_offset, size_t data_size) {
+        off64_t data_offset, size_t data_size, uint32_t timescaleFactor) {
     if (mHasTimeToSample || data_size < 8) {
         return ERROR_MALFORMED;
     }
@@ -433,6 +433,11 @@ status_t SampleTable::setTimeToSampleParams(
 
     for (size_t i = 0; i < mTimeToSampleCount * 2; ++i) {
         mTimeToSample[i] = ntohl(mTimeToSample[i]);
+        //mtkadd to calculate sample delta with timescaleFactor
+        //to prevent uint32_t overflow.
+        if (i%2 == 1 && timescaleFactor != 0) {
+            mTimeToSample[i] /= timescaleFactor;
+        }
     }
 
     mHasTimeToSample = true;
@@ -444,7 +449,7 @@ status_t SampleTable::setTimeToSampleParams(
 // contain signed values, so we're always treating the values as signed,
 // regardless of version.
 status_t SampleTable::setCompositionTimeToSampleParams(
-        off64_t data_offset, size_t data_size) {
+        off64_t data_offset, size_t data_size, uint32_t timescaleFactor) {
     ALOGI("There are reordered frames present.");
 
     if (mCompositionTimeDeltaEntries != NULL || data_size < 8) {
@@ -509,6 +514,11 @@ status_t SampleTable::setCompositionTimeToSampleParams(
 
     for (size_t i = 0; i < 2 * numEntries; ++i) {
         mCompositionTimeDeltaEntries[i] = ntohl(mCompositionTimeDeltaEntries[i]);
+        //mtkadd to calculate sample mCompositionTimeDelta with timescaleFactor
+        //to prevent uint32_t overflow.
+        if (i%2 == 1 && timescaleFactor != 0) {
+            mCompositionTimeDeltaEntries[i] /= timescaleFactor;
+        }
     }
 
     mCompositionDeltaLookup->setEntries(
@@ -685,8 +695,12 @@ void SampleTable::buildSampleEntriesTable() {
                                 INT32_MAX : uint32_t(-compTimeDelta)))
                         || (compTimeDelta > 0 &&
                                 sampleTime > UINT32_MAX - compTimeDelta)) {
-                    ALOGE("%u + %d would overflow, clamping",
+                    //mtkadd fix log too much
+                    if (sampleTime < UINT32_MAX) {
+                        ALOGE("sampleTime + compTimeDelta = %u + %d would overflow, clamping",
                             sampleTime, compTimeDelta);
+                    }
+
                     if (compTimeDelta < 0) {
                         sampleTime = 0;
                     } else {
@@ -702,8 +716,11 @@ void SampleTable::buildSampleEntriesTable() {
 
             ++sampleIndex;
             if (sampleTime > UINT32_MAX - delta) {
-                ALOGE("%u + %u would overflow, clamping",
-                    sampleTime, delta);
+                //mtkadd fix log too much
+                if (sampleTime < UINT32_MAX) {
+                    ALOGE("%u + %u would overflow, clamping",
+                            sampleTime, delta);
+                }
                 sampleTime = UINT32_MAX;
             } else {
                 sampleTime += delta;

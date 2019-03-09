@@ -205,7 +205,7 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
 
     if(LvmInitFlag == LVM_FALSE){
         LvmInitFlag = LVM_TRUE;
-        ALOGV("\tEffectCreate - Initializing all global memory");
+        ALOGD("\tEffectCreate - Initializing all global memory");
         LvmGlobalBundle_init();
     }
 
@@ -228,18 +228,18 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
     }
 
     SessionIndex[sessionNo] = sessionId;
-    ALOGV("\tEffectCreate: Allocating sessionNo %d for sessionId %d\n", sessionNo, sessionId);
+    ALOGD("\tEffectCreate: Allocating sessionNo %d for sessionId %d\n", sessionNo, sessionId);
 
     pContext = new EffectContext;
 
     // If this is the first create in this session
     if(GlobalSessionMemory[sessionNo].bBundledEffectsEnabled == LVM_FALSE){
-        ALOGV("\tEffectCreate - This is the first effect in current sessionId %d sessionNo %d",
-                sessionId, sessionNo);
 
         GlobalSessionMemory[sessionNo].bBundledEffectsEnabled = LVM_TRUE;
         GlobalSessionMemory[sessionNo].pBundledContext        = new BundledEffectContext;
         newBundle = true;
+        ALOGD("\tEffectCreate - This is the first effect in current sessionId %d sessionNo %d, bundledContex %p",
+                sessionId, sessionNo, GlobalSessionMemory[sessionNo].pBundledContext);
 
         pContext->pBundledContext = GlobalSessionMemory[sessionNo].pBundledContext;
         pContext->pBundledContext->SessionNo                = sessionNo;
@@ -317,14 +317,14 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
         pContext->pBundledContext =
                 GlobalSessionMemory[sessionNo].pBundledContext;
     }
-    ALOGV("\tEffectCreate - pBundledContext is %p", pContext->pBundledContext);
+    ALOGD("\tEffectCreate - pBundledContext is %p", pContext->pBundledContext);
 
     pSessionContext = &GlobalSessionMemory[pContext->pBundledContext->SessionNo];
 
     // Create each Effect
     if (memcmp(uuid, &gBassBoostDescriptor.uuid, sizeof(effect_uuid_t)) == 0){
         // Create Bass Boost
-        ALOGV("\tEffectCreate - Effect to be created is LVM_BASS_BOOST");
+        ALOGD("\tEffectCreate - Effect to be created is LVM_BASS_BOOST");
         pSessionContext->bBassInstantiated = LVM_TRUE;
         pContext->pBundledContext->SamplesToExitCountBb = 0;
 
@@ -332,7 +332,7 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
         pContext->EffectType = LVM_BASS_BOOST;
     } else if (memcmp(uuid, &gVirtualizerDescriptor.uuid, sizeof(effect_uuid_t)) == 0){
         // Create Virtualizer
-        ALOGV("\tEffectCreate - Effect to be created is LVM_VIRTUALIZER");
+        ALOGD("\tEffectCreate - Effect to be created is LVM_VIRTUALIZER");
         pSessionContext->bVirtualizerInstantiated=LVM_TRUE;
         pContext->pBundledContext->SamplesToExitCountVirt = 0;
 
@@ -340,7 +340,7 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
         pContext->EffectType = LVM_VIRTUALIZER;
     } else if (memcmp(uuid, &gEqualizerDescriptor.uuid, sizeof(effect_uuid_t)) == 0){
         // Create Equalizer
-        ALOGV("\tEffectCreate - Effect to be created is LVM_EQUALIZER");
+        ALOGD("\tEffectCreate - Effect to be created is LVM_EQUALIZER");
         pSessionContext->bEqualizerInstantiated = LVM_TRUE;
         pContext->pBundledContext->SamplesToExitCountEq = 0;
 
@@ -348,7 +348,7 @@ extern "C" int EffectCreate(const effect_uuid_t *uuid,
         pContext->EffectType = LVM_EQUALIZER;
     } else if (memcmp(uuid, &gVolumeDescriptor.uuid, sizeof(effect_uuid_t)) == 0){
         // Create Volume
-        ALOGV("\tEffectCreate - Effect to be created is LVM_VOLUME");
+        ALOGD("\tEffectCreate - Effect to be created is LVM_VOLUME");
         pSessionContext->bVolumeInstantiated = LVM_TRUE;
 
         pContext->itfe       = &gLvmEffectInterface;
@@ -366,8 +366,10 @@ exit:
             if (newBundle) {
                 GlobalSessionMemory[sessionNo].bBundledEffectsEnabled = LVM_FALSE;
                 SessionIndex[sessionNo] = LVM_UNUSED_SESSION;
+                ALOGD("%s delete bundledContext 0x%p, sessionNo %d", __FUNCTION__, pContext->pBundledContext, sessionNo);
                 delete pContext->pBundledContext;
             }
+            ALOGD("%s delete Context 0x%p", __FUNCTION__,pContext);
             delete pContext;
         }
         if (pHandle != NULL)
@@ -376,7 +378,7 @@ exit:
       if (pHandle != NULL)
         *pHandle = (effect_handle_t)pContext;
     }
-    ALOGV("\tEffectCreate end..\n\n");
+    ALOGD("\tEffectCreate end.. \n\n");
     return ret;
 } /* end EffectCreate */
 
@@ -384,13 +386,20 @@ extern "C" int EffectRelease(effect_handle_t handle){
     ALOGV("\n\tEffectRelease start %p", handle);
     EffectContext * pContext = (EffectContext *)handle;
 
-    ALOGV("\tEffectRelease start handle: %p, context %p", handle, pContext->pBundledContext);
     if (pContext == NULL){
-        ALOGV("\tLVM_ERROR : EffectRelease called with NULL pointer");
+        ALOGD("\tLVM_ERROR : EffectRelease called with NULL pointer");
         return -EINVAL;
     }
+    ALOGD("\tEffectRelease start handle: %p, context %p, EffectType %d, GlobalSessionMemory %p,SessionIndex %p",
+    handle, pContext->pBundledContext, pContext->EffectType, &GlobalSessionMemory[0], &SessionIndex[0]);
 
     SessionContext *pSessionContext = &GlobalSessionMemory[pContext->pBundledContext->SessionNo];
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+    if(pSessionContext->pBundledContext == LVM_NULL) {
+        ALOGD("EffectRelease Session Already removed pBundledContext = NULL");
+        return 0;
+    }
+#endif
 
     // Clear the instantiated flag for the effect
     // protect agains the case where an effect is un-instantiated without being disabled
@@ -470,13 +479,16 @@ extern "C" int EffectRelease(effect_handle_t handle){
         free(pContext->pBundledContext->pInputBuffer);
         free(pContext->pBundledContext->pOutputBuffer);
 #endif
+        ALOGD("%s, pContext->pBundledContext %p, SessionNo %d, SessionId %d", __FUNCTION__,
+        pContext->pBundledContext, pContext->pBundledContext->SessionNo,
+        pContext->pBundledContext->SessionId);
         delete pContext->pBundledContext;
         pContext->pBundledContext = LVM_NULL;
     }
     // free the effect context for current effect
     delete pContext;
 
-    ALOGV("\tEffectRelease end\n");
+    ALOGD("\tEffectRelease end\n");
     return 0;
 
 } /* end EffectRelease */
@@ -510,7 +522,7 @@ extern "C" int EffectGetDescriptor(const effect_uuid_t *uuid,
 } /* end EffectGetDescriptor */
 
 void LvmGlobalBundle_init(){
-    ALOGV("\tLvmGlobalBundle_init start");
+    ALOGD("\tLvmGlobalBundle_init start");
     for(int i=0; i<LVM_MAX_SESSIONS; i++){
         GlobalSessionMemory[i].bBundledEffectsEnabled   = LVM_FALSE;
         GlobalSessionMemory[i].bVolumeInstantiated      = LVM_FALSE;
@@ -599,11 +611,11 @@ int LvmBundle_init(EffectContext *pContext){
             MemTab.Region[i].pBaseAddress = malloc(MemTab.Region[i].Size);
 
             if (MemTab.Region[i].pBaseAddress == LVM_NULL){
-                ALOGV("\tLVM_ERROR :LvmBundle_init CreateInstance Failed to allocate %" PRIu32
+                ALOGD("\tLVM_ERROR :LvmBundle_init CreateInstance Failed to allocate %" PRIu32
                         " bytes for region %u\n", MemTab.Region[i].Size, i );
                 bMallocFailure = LVM_TRUE;
             }else{
-                ALOGV("\tLvmBundle_init CreateInstance allocated %" PRIu32
+                ALOGD("\tLvmBundle_init CreateInstance allocated %" PRIu32
                         " bytes for region %u at %p\n",
                         MemTab.Region[i].Size, i, MemTab.Region[i].pBaseAddress);
             }
@@ -616,10 +628,10 @@ int LvmBundle_init(EffectContext *pContext){
     if(bMallocFailure == LVM_TRUE){
         for (int i=0; i<LVM_NR_MEMORY_REGIONS; i++){
             if (MemTab.Region[i].pBaseAddress == LVM_NULL){
-                ALOGV("\tLVM_ERROR :LvmBundle_init CreateInstance Failed to allocate %" PRIu32
+                ALOGD("\tLVM_ERROR :LvmBundle_init CreateInstance Failed to allocate %" PRIu32
                         " bytes for region %u Not freeing\n", MemTab.Region[i].Size, i );
             }else{
-                ALOGV("\tLVM_ERROR :LvmBundle_init CreateInstance Failed: but allocated %" PRIu32
+                ALOGD("\tLVM_ERROR :LvmBundle_init CreateInstance Failed: but allocated %" PRIu32
                      " bytes for region %u at %p- free\n",
                      MemTab.Region[i].Size, i, MemTab.Region[i].pBaseAddress);
                 free(MemTab.Region[i].pBaseAddress);
@@ -1203,10 +1215,10 @@ void LvmEffect_free(EffectContext *pContext){
 
                 free(MemTab.Region[i].pBaseAddress);
 
-                ALOGV("\tLvmEffect_free - END   freeing %" PRIu32 " bytes for region %u at %p\n",
+                ALOGD("\tLvmEffect_free - END   freeing %" PRIu32 " bytes for region %u at %p\n",
                         MemTab.Region[i].Size, i, MemTab.Region[i].pBaseAddress);
             }else{
-                ALOGV("\tLVM_ERROR : LvmEffect_free - trying to free with NULL pointer %" PRIu32
+                ALOGD("\tLVM_ERROR : LvmEffect_free - trying to free with NULL pointer %" PRIu32
                         " bytes for region %u at %p ERROR\n",
                         MemTab.Region[i].Size, i, MemTab.Region[i].pBaseAddress);
             }
@@ -3771,6 +3783,9 @@ int Effect_command(effect_handle_t  self,
         case EFFECT_CMD_SET_VOLUME:
         {
             uint32_t leftVolume, rightVolume;
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+            uint32_t firstVolume;
+#endif
             int16_t  leftdB, rightdB;
             int16_t  maxdB, pandB;
             int32_t  vol_ret[2] = {1<<24,1<<24}; // Apply no volume
@@ -3782,12 +3797,29 @@ int Effect_command(effect_handle_t  self,
                 break;
             }
 
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+            if (pCmdData == NULL ||
+                    (cmdSize != 2 * sizeof(uint32_t) && cmdSize != 3 * sizeof(uint32_t)) ||
+                    pReplyData == NULL || replySize == NULL || *replySize < 2 * sizeof(int32_t)) {
+                ALOGV("\tLVM_ERROR : Effect_command cmdCode Case: "
+                        "EFFECT_CMD_SET_VOLUME: ERROR");
+                return -EINVAL;
+            }
+            if (cmdSize == 3 * sizeof(uint32_t)) {
+                firstVolume = ((*((uint32_t *)pCmdData + 2)));
+                if (firstVolume) {
+                    pContext->pBundledContext->firstVolume = LVM_TRUE;
+                }
+            }
+
+#else
             if (pCmdData == NULL || cmdSize != 2 * sizeof(uint32_t) || pReplyData == NULL ||
                     replySize == NULL || *replySize < 2*sizeof(int32_t)) {
                 ALOGV("\tLVM_ERROR : Effect_command cmdCode Case: "
                         "EFFECT_CMD_SET_VOLUME: ERROR");
                 return -EINVAL;
             }
+#endif
 
             leftVolume  = ((*(uint32_t *)pCmdData));
             rightVolume = ((*((uint32_t *)pCmdData + 1)));

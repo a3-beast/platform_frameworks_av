@@ -2,10 +2,12 @@ cc_library_shared {
 
     srcs: [
         "ActivityManager.cpp",
+        "HDCP.cpp",
         "MediaPlayerFactory.cpp",
         "MediaPlayerService.cpp",
         "MediaRecorderClient.cpp",
         "MetadataRetrieverClient.cpp",
+        "RemoteDisplay.cpp",
         "StagefrightRecorder.cpp",
         "TestPlayerStub.cpp",
     ],
@@ -51,6 +53,7 @@ cc_library_shared {
     include_dirs: [
         "frameworks/av/media/libstagefright/rtsp",
         "frameworks/av/media/libstagefright/webm",
+        "frameworks/av/media/libmtkavenhancements/wifi-display",
     ],
 
     local_include_dirs: ["include"],
@@ -71,8 +74,31 @@ cc_library_shared {
             cfi: true,
         },
     },
+// MTK_USE_ANDROID_MM_DEFAULT_CODE
+    defaults: [
+      "mtk_libmediaplayerservice_defaults",
+    ],
+}
 
+bootstrap_go_package {
+    name:"soong-libmediaplayerservice-mediatek",
+    pkgPath:"android/soong/libmediaplayerservice/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libmediaplayerservice.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libmediaplayerservice_defaults {
+    name: "mtk_libmediaplayerservice_defaults",
+    shared_libs: [
+        "libstagefright_wfd_mtk",
+        "libmtkavenhancements",
+    ],
 }
 
 subdirs = ["*"]
-

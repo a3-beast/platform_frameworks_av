@@ -245,6 +245,12 @@ void MediaClock::onMessageReceived(const sp<AMessage> &msg) {
             processTimers_l();
             break;
         }
+        case kWhatDoProcessTimers:
+        {
+            Mutex::Autolock autoLock(mLock);
+            doProcessTimers();
+            break;
+        }
 
         default:
             TRESPASS();
@@ -334,5 +340,42 @@ void MediaClock::notifyDiscontinuity_l() {
         msg->post();
     }
 }
+
+//mtkadd+
+void MediaClock::notifyDoProcessTimers(int64_t *anchorTimeMediaUs){
+    Mutex::Autolock autoLock(mLock);
+    if(mTimers.empty()){
+        return;
+    }
+    *anchorTimeMediaUs = mTimers.begin()->mMediaTimeUs;
+    sp<AMessage> msg = new AMessage(kWhatDoProcessTimers, this);
+    msg->post();
+}
+
+//when aduio decoder occur error,updateAnchor and process all timers.
+//if not do that,when audio decoder error,the members of mTimers can't be processed,
+//and the remaining video buffer cannot be drained,video stuck,can't exit.
+void MediaClock::doProcessTimers(){
+    ALOGD("doProcessTimers");
+    if(mTimers.empty()){
+        return;
+    }
+    auto it = mTimers.begin();
+    if (mAnchorTimeRealUs == -1) {
+        ALOGW("maybe audio decoder error,audio flush,updateAnchor.");
+        mAnchorTimeMediaUs = it->mMediaTimeUs;
+        mAnchorTimeRealUs = ALooper::GetNowUs();
+        mMaxTimeMediaUs = it->mMediaTimeUs + 100000;
+    }
+    processTimers_l();
+}
+void MediaClock::clearTimers() {
+    Mutex::Autolock autoLock(mLock);
+    auto it = mTimers.begin();
+    while (it != mTimers.end()) {
+        it = mTimers.erase(it);
+    }
+}
+//mtkadd-
 
 }  // namespace android

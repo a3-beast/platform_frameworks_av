@@ -689,4 +689,19 @@ sp<AMessage> AnotherPacketSource::trimBuffersBeforeMeta(
     return firstMeta;
 }
 
+#ifdef MTK_SEEK_AND_DURATION
+// add for mtk seek, video can not been create when suspend-resume after seek
+// to the position behind last I frame, as format been cleared when seek.
+void AnotherPacketSource::clearKeepFormat() {
+    Mutex::Autolock autoLock(mLock);
+    if (!mBuffers.empty()) {
+        mBuffers.clear();
+    }
+    mEOSResult = OK;
+
+    mDiscontinuitySegments.clear();
+    mDiscontinuitySegments.push_back(DiscontinuitySegment());
+    mLatestDequeuedMeta = NULL;
+}
+#endif
 }  // namespace android

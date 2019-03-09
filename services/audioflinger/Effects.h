@@ -176,6 +176,13 @@ mutable Mutex               mLock;      // mutex for process, commands and handl
     uint32_t mInChannelCountRequested;
     uint32_t mOutChannelCountRequested;
 #endif
+
+//<MTK_AUDIO_FIX_DEFAULT_DEFECT
+    void setFirstVolume( bool firstVolume );
+    bool mFirstVolCtrl;
+    bool mFirstVolume;
+//MTK_AUDIO_FIX_DEFAULT_DEFECT>
+
 };
 
 // The EffectHandle class implements the IEffect interface. It provides resources

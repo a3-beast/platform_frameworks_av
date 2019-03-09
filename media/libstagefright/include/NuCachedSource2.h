@@ -143,6 +143,7 @@ private:
     void updateCacheParamsFromSystemProperty();
     void updateCacheParamsFromString(const char *s);
 
+    void showBW();  // mtk add
     DISALLOW_EVIL_CONSTRUCTORS(NuCachedSource2);
 };
 

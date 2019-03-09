@@ -39,4 +39,24 @@ cc_library_shared {
         },
     },
 
+    defaults: [
+        "mtk_libwavextractor_defaults",
+    ],
+}
+
+bootstrap_go_package {
+    name:"soong-libwavextractor-mediatek",
+    pkgPath:"android/soong/libwavextractor/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libwavextractor.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libwavextractor_defaults {
+    name: "mtk_libwavextractor_defaults",
 }

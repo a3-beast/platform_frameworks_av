@@ -46,6 +46,12 @@ sp<IMediaExtractor> MediaExtractorFactory::Create(
         ALOGW("creating media extractor in calling process");
         return CreateFromService(source, mime);
     } else {
+// Do DrmInitialization before creating mediaextractor from MediaExtractorService,
+// otherwise current Calling Pid will change to Media Extractor Pid.
+// For some DRM scanerio we need AP's PID to pass some DRM plugin's permission check.
+#ifdef MTK_DRM_APP
+        source->DrmInitialization(nullptr /* mime */);
+#endif
         // remote extractor
         ALOGV("get service manager");
         sp<IBinder> binder = defaultServiceManager()->getService(String16("media.extractor"));
@@ -208,7 +214,11 @@ void MediaExtractorFactory::RegisterExtractor(const sp<ExtractorPlugin> &plugin,
         }
     }
     ALOGV("registering extractor for %s", plugin->def.extractor_name);
-    pluginList.push_back(plugin);
+    if (!strcmp(plugin->def.extractor_name, "MP4 Extractor")) {
+        pluginList.push_front(plugin);
+    } else {
+        pluginList.push_back(plugin);
+    }
 }
 
 //static

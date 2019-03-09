@@ -333,6 +333,9 @@ status_t WAVExtractor::init() {
                 }
 
                 mTrackMeta.setInt64(kKeyDuration, durationUs);
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+                mTrackMeta.setInt32(kKeyBitWidth, mBitsPerSample);
+#endif
 
                 return OK;
             }
@@ -500,11 +503,15 @@ status_t WAVSource::read(
             buffer->release();
             buffer = tmp;
         } else if (mBitsPerSample == 24) {
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+            ALOGD("24bit data throughPass to raw component directly");
+#else
             // Convert 24-bit signed samples to 16-bit signed in place
             const size_t numSamples = n / 3;
 
             memcpy_to_i16_from_p24((int16_t *)buffer->data(), (const uint8_t *)buffer->data(), numSamples);
             buffer->set_range(0, 2 * numSamples);
+#endif
         }  else if (mBitsPerSample == 32) {
             // Convert 32-bit signed samples to 16-bit signed in place
             const size_t numSamples = n / 4;

@@ -70,6 +70,11 @@ struct MediaClock : public AHandler {
 
     void reset();
 
+    //mtkadd for AudioDecoder error
+    void notifyDoProcessTimers(int64_t *anchorTimeMediaUs);
+    void doProcessTimers();
+    void clearTimers();
+
 protected:
     virtual ~MediaClock();
 
@@ -78,6 +83,7 @@ protected:
 private:
     enum {
         kWhatTimeIsUp = 'tIsU',
+        kWhatDoProcessTimers = 'doPT', //mtkadd
     };
 
     struct Timer {

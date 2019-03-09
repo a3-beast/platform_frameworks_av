@@ -85,6 +85,9 @@ public:
     bool mStrategyMutedByDevice[NUM_STRATEGIES]; // strategies muted because of incompatible
                                         // device selection. See checkDeviceMuteStrategies()
     AudioPolicyClientInterface *mClientInterface;
+    // MTK_AUDIO
+    void setOutputFirstActive(bool firstActive) { mOutputFirstActive = firstActive; };
+    bool mOutputFirstActive;
 
 protected:
     audio_patch_handle_t mPatchHandle;
@@ -225,6 +228,12 @@ public:
     audio_devices_t getSupportedDevices(audio_io_handle_t handle) const;
 
     status_t dump(int fd) const;
+
+    /**
+     * MTK_AUDIO/MTK_USB_PHONECALL
+     * returns the USB output handle if it is open or 0 otherwise
+     */
+    audio_io_handle_t getUsbOutput() const;
 };
 
 class HwAudioOutputCollection :

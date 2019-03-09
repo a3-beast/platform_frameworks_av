@@ -43,6 +43,9 @@
 #include <media/stagefright/Utils.h>
 #include "../../libstagefright/include/NuCachedSource2.h"
 #include "../../libstagefright/include/HTTPBase.h"
+#ifdef MTK_DRM_APP
+#include <drmutils/drm_utils_mtk.h>
+#endif
 
 namespace android {
 
@@ -84,10 +87,26 @@ NuPlayer::GenericSource::GenericSource(
     mBufferingSettings.mInitialMarkMs = kInitialMarkMs;
     mBufferingSettings.mResumePlaybackMarkMs = kResumePlaybackMarkMs;
     resetDataSource();
+
+    //init extra variant
+    init();
 }
 
 void NuPlayer::GenericSource::resetDataSource() {
     ALOGV("resetDataSource");
+
+    //mtkadd to stop TOC before release DataSource
+    //if not stop,maybe occur NE in remoteDataSource.cpp readAt
+    const char *mime = NULL;
+    if (mFileMeta != NULL && mFileMeta->findCString(kKeyMIMEType, &mime)
+        && (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG) || !strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_ALAC)) // mp3/ALAC
+        && mAudioTrack.mSource != NULL ) {
+        ALOGI("GenericSource stop mp3/alac TOC!");
+        status_t err = mAudioTrack.mSource->stopTocThreadIfTocEnabled();
+        if(err < 0) {
+            ALOGE("stop TOC fail,maybe TOC not Enabled or other reason.");
+        }
+    }
 
     mHTTPService.clear();
     mHttpSource.clear();
@@ -107,6 +126,12 @@ void NuPlayer::GenericSource::resetDataSource() {
     mIsDrmReleased = false;
     mIsSecure = false;
     mMimes.clear();
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::STOP, 0);
+    mDecryptHandle = NULL;
+    mDrmManagerClient = NULL;
+    mIsCurrentComplete = false;
+#endif
 }
 
 status_t NuPlayer::GenericSource::setDataSource(
@@ -170,14 +195,25 @@ status_t NuPlayer::GenericSource::initFromDataSource() {
     extractor = MediaExtractorFactory::Create(dataSource, NULL);
 
     if (extractor == NULL) {
+        mLock.lock();  // mtk add to avoid race condition of mDataSource
         ALOGE("initFromDataSource, cannot create extractor!");
         return UNKNOWN_ERROR;
     }
+#ifdef MTK_DRM_APP
+    mDataSource->getDrmInfo(mDecryptHandle, &mDrmManagerClient);
+    if (mDecryptHandle.get() != NULL && DecryptApiType::CONTAINER_BASED == mDecryptHandle->decryptApiType
+        && RightsStatus::RIGHTS_VALID != mDecryptHandle->status) {
+            sp<AMessage> msg = dupNotify();
+            msg->setInt32("what", kWhatDrmNoLicense);
+            msg->post();
+    }
+#endif
 
     sp<MetaData> fileMeta = extractor->getMetaData();
 
     size_t numtracks = extractor->countTracks();
     if (numtracks == 0) {
+        mLock.lock();  // mtk add to avoid race condition of mDataSource
         ALOGE("initFromDataSource, source has no track!");
         return UNKNOWN_ERROR;
     }
@@ -196,6 +232,13 @@ status_t NuPlayer::GenericSource::initFromDataSource() {
     mMimes.clear();
 
     for (size_t i = 0; i < numtracks; ++i) {
+
+        //mtkadd+ tricky to set flag before gettrack
+        if (mIsMtkMusic) {
+            sp<MetaData> mp3Meta = extractor->getTrackMetaData(i, MediaExtractor::kIncludeMp3LowPowerInfo);
+            ALOGD("set mp3 low power");
+        }
+
         sp<IMediaSource> track = extractor->getTrack(i);
         if (track == NULL) {
             continue;
@@ -457,7 +500,10 @@ void NuPlayer::GenericSource::onPrepareAsync() {
         }
         notifyVideoSizeChanged(msg);
     }
-
+#ifdef MTK_DRM_APP  // OMA DRM v1 implementation: consume rights.
+    mIsCurrentComplete = false;
+    ConsumeRight(mDecryptHandle, mDrmManagerClient, mDrmProcName);
+#endif
     notifyFlagsChanged(
             // FLAG_SECURE will be known if/when prepareDrm is called by the app
             // FLAG_PROTECTED will be known if/when prepareDrm is called by the app
@@ -507,6 +553,10 @@ void NuPlayer::GenericSource::notifyPreparedAndCleanup(status_t err) {
         mBitrate = -1;
         mPrevBufferPercentage = -1;
         ++mPollBufferingGeneration;
+#ifdef MTK_DRM_APP
+        mDecryptHandle = NULL;
+        mDrmManagerClient = NULL;
+#endif
     }
     notifyPrepared(err);
 }
@@ -524,21 +574,38 @@ void NuPlayer::GenericSource::start() {
     }
 
     mStarted = true;
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::START, getLastReadPosition() / 1000);
+    if (mIsCurrentComplete) {    // single recursive mode
+        ConsumeRight(mDecryptHandle, mDrmManagerClient, mDrmProcName);
+        mIsCurrentComplete = false;
+    }
+#endif
 }
 
 void NuPlayer::GenericSource::stop() {
     Mutex::Autolock _l(mLock);
     mStarted = false;
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::STOP, 0);
+    mIsCurrentComplete = true;
+#endif
 }
 
 void NuPlayer::GenericSource::pause() {
     Mutex::Autolock _l(mLock);
     mStarted = false;
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::PAUSE, 0);
+#endif
 }
 
 void NuPlayer::GenericSource::resume() {
     Mutex::Autolock _l(mLock);
     mStarted = true;
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::START, getLastReadPosition() / 1000);
+#endif
 }
 
 void NuPlayer::GenericSource::disconnect() {
@@ -559,6 +626,13 @@ void NuPlayer::GenericSource::disconnect() {
         static_cast<HTTPBase *>(httpSource.get())->disconnect();
     }
 }
+#ifdef MTK_DRM_APP
+void NuPlayer::GenericSource::setDrmPlaybackStatusIfNeeded(int playbackStatus, int64_t position) {
+    if (mDecryptHandle != NULL) {
+        mDrmManagerClient->setPlaybackStatus(mDecryptHandle, playbackStatus, position);
+    }
+}
+#endif
 
 status_t NuPlayer::GenericSource::feedMoreTSData() {
     return OK;
@@ -1149,6 +1223,12 @@ status_t NuPlayer::GenericSource::doSeek(int64_t seekTimeUs, MediaPlayerSeekMode
         readBuffer(MEDIA_TRACK_TYPE_AUDIO, seekTimeUs, MediaPlayerSeekMode::SEEK_CLOSEST);
         mAudioLastDequeueTimeUs = seekTimeUs;
     }
+#ifdef MTK_DRM_APP
+    setDrmPlaybackStatusIfNeeded(Playback::START, seekTimeUs / 1000);
+    if (!mStarted) {
+        setDrmPlaybackStatusIfNeeded(Playback::PAUSE, 0);
+    }
+#endif
 
     if (mSubtitleTrack.mSource != NULL) {
         mSubtitleTrack.mPackets->clear();
@@ -1314,6 +1394,13 @@ void NuPlayer::GenericSource::readBuffer(
         case MEDIA_TRACK_TYPE_AUDIO:
             track = &mAudioTrack;
             maxBuffers = 64;
+// add for mtk
+            // add for TS, resolve 4k video play not smooth, too many buffers will cause parse audio too long time.
+            // it will block video parse, as TS video and audio is interleave.
+            if (isTS()) {
+                maxBuffers = 8;
+            }
+// end of add for mtk
             break;
         case MEDIA_TRACK_TYPE_SUBTITLE:
             track = &mSubtitleTrack;
@@ -1395,6 +1482,20 @@ void NuPlayer::GenericSource::readBuffer(
 
             queueDiscontinuityIfNeeded(seeking, formatChange, trackType, track);
 
+#ifdef MTK_AUDIO_APE_SUPPORT
+            //for ape seek
+            int32_t newframe = 0;
+            int32_t firstbyte = 0;
+            if (mbuf->meta_data().findInt32(kKeyNemFrame, &newframe))
+            {
+                ALOGI("see nwfrm:%d", (int)newframe);
+            }
+            if (mbuf->meta_data().findInt32(kKeySeekByte, &firstbyte))
+            {
+                ALOGI("see sekbyte:%d", (int)firstbyte);
+            }
+#endif
+
             sp<ABuffer> buffer = mediaBufferToABuffer(mbuf, trackType);
             if (numBuffers == 0 && actualTimeUs != nullptr) {
                 *actualTimeUs = timeUs;
@@ -1405,6 +1506,31 @@ void NuPlayer::GenericSource::readBuffer(
                         && seekTimeUs > timeUs) {
                     sp<AMessage> extra = new AMessage;
                     extra->setInt64("resume-at-mediaTimeUs", seekTimeUs);
+#ifdef MTK_AUDIO_APE_SUPPORT
+                    //for ape seek
+                    if (newframe != 0 || firstbyte != 0){
+                        extra->setInt32("nwfrm", newframe);
+                        extra->setInt32("sekbyte", firstbyte);
+                    }
+#endif
+                    //mtk add seekmode for ALPS03567323 AND ALPS03607769
+                    // should set decode-seekTime to decoder to skip B frame when seek
+                    // case 1: seek-preroll is open
+                    extra->setInt64("decode-seekTime", seekTimeUs);
+                    meta->setMessage("extra", extra);
+                }
+                else if (meta != nullptr) {
+                    // case 2: seek-preroll is off
+                    sp<AMessage> extra = new AMessage;
+                    extra->setInt64("decode-seekTime", timeUs);
+#ifdef MTK_AUDIO_APE_SUPPORT
+                    //for ape seek
+                    if (newframe != 0 || firstbyte != 0){
+                        extra->setInt64("resume-at-mediaTimeUs", seekTimeUs);
+                        extra->setInt32("nwfrm", newframe);
+                        extra->setInt32("sekbyte", firstbyte);
+                    }
+#endif
                     meta->setMessage("extra", extra);
                 }
             }
@@ -1684,5 +1810,44 @@ void NuPlayer::GenericSource::signalBufferReturned(MediaBufferBase *buffer)
     buffer->setObserver(NULL);
     buffer->release(); // this leads to delete since that there is no observor
 }
+
+// add for mtk
+bool NuPlayer::GenericSource::isTS() {
+    const char *mime = NULL;
+    if (mFileMeta != NULL && mFileMeta->findCString(kKeyMIMEType, &mime)
+            && !strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MPEG2TS)) {
+        return true;
+    }
+    return false;
+}
+// end of add for mtk
+
+//mtkadd+
+void NuPlayer::GenericSource::init() {
+    mIsMtkMusic = 0;
+//  M Add for support OMA DRM playback
+    mDecryptHandle = NULL;
+    mDrmManagerClient = NULL;
+    mIsCurrentComplete = false;
+}
+
+void NuPlayer::GenericSource::setParams(const sp<MetaData>& meta) {
+    mIsMtkMusic = 0;
+    if (meta->findInt32(kKeyMp3MultiRead, &mIsMtkMusic) && (mIsMtkMusic == 1)) {
+        ALOGD("It's MTK Music");
+    }
+}
+
+//mtkadd
+status_t NuPlayer::GenericSource::setVendorMeta(bool audio, const sp<MetaData> & meta)
+{
+    sp<IMediaSource> source = audio ? mAudioTrack.mSource : mVideoTrack.mSource;
+    if (source == NULL || meta == NULL) {
+        return UNKNOWN_ERROR;
+    }
+    source->setVendorMeta(meta);
+    return OK;
+}
+
 
 }  // namespace android

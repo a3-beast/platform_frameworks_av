@@ -29,6 +29,8 @@ RemoteMediaSource::RemoteMediaSource(
       mExtractorPlugin(plugin) {}
 
 RemoteMediaSource::~RemoteMediaSource() {
+    // delete MtkAVISource in ~MtkAVIExtractor
+    if (strcmp(mExtractor->name(), "MtkAVIExtractor"))
     delete mSource;
     mExtractorPlugin = nullptr;
 }

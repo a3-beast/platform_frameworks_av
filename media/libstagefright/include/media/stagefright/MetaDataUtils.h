@@ -29,4 +29,6 @@ bool MakeAACCodecSpecificData(MetaDataBase &meta, unsigned profile, unsigned sam
 
 }  // namespace android
 
+#include "MetaDataUtils_MTK.h"
+
 #endif  // META_DATA_UTILS_H_

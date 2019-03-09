@@ -6,6 +6,7 @@ cc_defaults {
         "MPEG4Extractor.cpp",
         "SampleIterator.cpp",
         "SampleTable.cpp",
+        "MtkMPEG4ExtractorExt.cpp",
     ],
 
     include_dirs: [
@@ -22,6 +23,7 @@ cc_defaults {
         "libstagefright_foundation",
         "libstagefright_id3",
         "libutils",
+        "libavextensions",
     ],
 
     cflags: [
@@ -38,7 +40,10 @@ cc_library_shared {
 
 
     name: "libmp4extractor",
-    defaults: ["libmp4extractor_defaults"],
+    defaults: [
+        "libmp4extractor_defaults",
+        "mtk_libmp4extractor_defaults",
+    ],
 
     sanitize: {
         cfi: true,
@@ -57,4 +62,21 @@ cc_library_static {
     name: "libmp4extractor_fuzzing",
 
     defaults: ["libmp4extractor_defaults"],
+}
+
+bootstrap_go_package {
+    name:"soong-libmp4extractor-mediatek",
+    pkgPath:"android/soong/libmp4extractor/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libmp4extractor.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libmp4extractor_defaults {
+    name: "mtk_libmp4extractor_defaults",
 }

@@ -111,8 +111,15 @@ status_t SampleIterator::seekTo(uint32_t sampleIndex) {
             if ((err = getSampleSizeDirect(
                             firstChunkSampleIndex + i, &sampleSize)) != OK) {
                 ALOGE("getSampleSizeDirect return error");
-                mCurrentChunkSampleSizes.clear();
-                return err;
+                //mtk add, stsc sample count is not sync with stsz sample count
+                if (err == ERROR_OUT_OF_RANGE) {
+                    ALOGW("stsc samples(%d) not sync with stsz samples(%d)", mSamplesPerChunk, i+1);
+                    mSamplesPerChunk = i + 1;
+                    break;
+                } else{
+                    mCurrentChunkSampleSizes.clear();
+                    return err;
+                }
             }
 
             mCurrentChunkSampleSizes.push(sampleSize);
@@ -326,6 +333,13 @@ status_t SampleIterator::findSampleTimeAndDuration(
         mTTSDuration = mTable->mTimeToSample[2 * mTimeToSampleIndex + 1];
 
         ++mTimeToSampleIndex;
+    }
+
+    //mtkadd+ to prevent *time overflow
+    uint32_t delta = sampleIndex - mTTSSampleIndex;
+    if (delta != 0 && mTTSDuration > (UINT32_MAX - mTTSSampleTime) / delta) {
+
+        return ERROR_OUT_OF_RANGE;
     }
 
     *time = mTTSSampleTime + mTTSDuration * (sampleIndex - mTTSSampleIndex);

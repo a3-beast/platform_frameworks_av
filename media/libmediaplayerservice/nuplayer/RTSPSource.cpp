@@ -76,6 +76,7 @@ NuPlayer::RTSPSource::RTSPSource(
             mExtraHeaders.removeItemsAt(index);
         }
     }
+    mPause = false;
 }
 
 NuPlayer::RTSPSource::~RTSPSource() {
@@ -204,6 +205,12 @@ bool NuPlayer::RTSPSource::haveSufficientDataOnAllTracks() {
 status_t NuPlayer::RTSPSource::dequeueAccessUnit(
         bool audio, sp<ABuffer> *accessUnit) {
     if (!stopBufferingIfNecessary()) {
+        return -EWOULDBLOCK;
+    }
+
+    //add by mtk, pause-->seek-->seek-->play, progress bar jammed
+    //cuased audioTrack can't flush again on PAUSED state
+    if(mPause == true && audio){
         return -EWOULDBLOCK;
     }
 

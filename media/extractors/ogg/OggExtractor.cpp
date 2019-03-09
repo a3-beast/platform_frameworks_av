@@ -414,6 +414,11 @@ status_t MyOggExtractor::findPrevGranulePosition(
 }
 
 status_t MyOggExtractor::seekToTime(int64_t timeUs) {
+    // mtk add for noise issue when seek to 0
+    if (0 == timeUs) {
+        return seekToOffset(mFirstDataOffset);
+    }
+
     timeUs -= mSeekPreRollUs;
     if (timeUs < 0) {
         timeUs = 0;

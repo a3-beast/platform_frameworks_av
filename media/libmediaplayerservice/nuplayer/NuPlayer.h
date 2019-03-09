@@ -159,6 +159,7 @@ private:
         kWhatPrepareDrm                 = 'pDrm',
         kWhatReleaseDrm                 = 'rDrm',
         kWhatMediaClockNotify           = 'mckN',
+        kWhatGetStats                   = 'gSts',
     };
 
     wp<NuPlayerDriver> mDriver;
@@ -174,7 +175,6 @@ private:
     sp<DecoderBase> mVideoDecoder;
     bool mOffloadAudio;
     sp<DecoderBase> mAudioDecoder;
-    Mutex mDecoderLock;  // guard |mAudioDecoder| and |mVideoDecoder|.
     sp<CCDecoder> mCCDecoder;
     sp<Renderer> mRenderer;
     sp<ALooper> mRendererLooper;
@@ -341,6 +341,15 @@ private:
     status_t onPrepareDrm(const sp<AMessage> &msg);
     status_t onReleaseDrm();
 
+//mtkadd+
+public:
+    void setIsWhitePlayback(bool setting);
+    // OMA DRM
+    void setDRMClientInfo(const Parcel *request);
+private:
+    void init_ext();
+    bool mIsWhitePlayback;  // write list
+    Mutex mAudioDecoderLock;  // guard |mAudioDecoder|
     DISALLOW_EVIL_CONSTRUCTORS(NuPlayer);
 };
 

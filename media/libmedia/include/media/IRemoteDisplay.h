@@ -37,6 +37,20 @@ namespace android {
 class IRemoteDisplay : public IInterface
 {
 public:
+    ///  M: add for rtsp generic message @{
+    enum{
+        kGenericMessagePlay = 1,
+        kGenericMessagePause = 2,
+        kGenericMessageTeardown = 3
+    };
+    enum{
+        kBitrateAuto = 0,
+        kBitrateLevel0 = 1,
+        kBitrateLevel1 = 2,
+        kBitrateLevel2 = 3
+    };
+    ///  @}
+
     DECLARE_META_INTERFACE(RemoteDisplay);
 
     virtual status_t pause() = 0;

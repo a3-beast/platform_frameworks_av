@@ -31,6 +31,10 @@
 
 #include <selinux/android.h>
 
+#if defined(MTK_OMA_DRM_SUPPORT) || defined(MTK_WV_DRM_SUPPORT) || defined (MTK_CTA_DRM_SUPPORT)
+#include <drm/DrmMtkUtil.h>
+#endif
+
 using namespace android;
 
 static int selinux_enabled;
@@ -83,16 +87,27 @@ bool DrmManagerService::isProtectedCallAllowed(drm_perm_t perm) {
     // TODO
     // Following implementation is just for reference.
     // Each OEM manufacturer should implement/replace with their own solutions.
+    bool result = false;
+
     IPCThreadState* ipcState = IPCThreadState::self();
     uid_t uid = ipcState->getCallingUid();
     pid_t spid = ipcState->getCallingPid();
 
     for (unsigned int i = 0; i < trustedUids.size(); ++i) {
         if (trustedUids[i] == uid) {
-            return selinuxIsProtectedCallAllowed(spid, perm);
+            result = selinuxIsProtectedCallAllowed(spid, perm);
         }
     }
-    return false;
+
+#if defined(MTK_OMA_DRM_SUPPORT) || defined(MTK_WV_DRM_SUPPORT) || defined (MTK_CTA_DRM_SUPPORT)
+    // M: Add for OMA DRM v1 implementation
+    // if can't authorize the process by UID, then check the process name.
+    if (!result) {
+        result = DrmMtkUtil::isTrustedClient(DrmMtkUtil::getProcessName(spid));
+    }
+#endif
+
+    return result;
 }
 
 void DrmManagerService::instantiate() {
@@ -260,6 +275,17 @@ status_t DrmManagerService::getAllSupportInfo(
             int uniqueId, int* length, DrmSupportInfo** drmSupportInfoArray) {
     ALOGV("Entering getAllSupportInfo");
     return mDrmManager->getAllSupportInfo(uniqueId, length, drmSupportInfoArray);
+}
+
+//Add by rui to pass client's client to drmserver
+DecryptHandle* DrmManagerService::openDecryptSession(
+            int uniqueId, int fd, off64_t offset, off64_t length, const char* mime, pid_t pid) {
+    ALOGV("Entering DrmManagerService::openDecryptSession");
+    if (isProtectedCallAllowed(OPEN_DECRYPT_SESSION)) {
+        return mDrmManager->openDecryptSession(uniqueId, fd, offset, length, mime, pid);
+    }
+
+    return NULL;
 }
 
 DecryptHandle* DrmManagerService::openDecryptSession(

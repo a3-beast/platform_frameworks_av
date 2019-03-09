@@ -82,4 +82,6 @@ void readFromAMessage(const sp<AMessage> &msg, BufferingSettings *buffering /* n
 AString nameForFd(int fd);
 }  // namespace android
 
+#include <media/stagefright/Utils_MTK.h>
+
 #endif  // UTILS_H_

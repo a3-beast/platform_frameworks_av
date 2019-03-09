@@ -90,6 +90,12 @@ private:
     int32_t outputDelayRingBufferSamplesAvailable();
     int32_t outputDelayRingBufferSpaceLeft();
 
+    // csd error handle for avi raw aac
+    void handleAviWithRawAAC();
+    UCHAR mAACConfigSpecificData[2];
+    bool mIsErrorCsdHandled;
+    bool mIsRawAac;
+
     DISALLOW_EVIL_CONSTRUCTORS(SoftAAC2);
 };
 

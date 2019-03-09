@@ -68,4 +68,35 @@ LOCAL_INIT_RC := audioserver.rc
 
 LOCAL_CFLAGS := -Werror -Wall
 
+#MTK_AUDIO B
+ifdef MTK_PATH_SOURCE
+LOCAL_C_INCLUDES += \
+        $(MTK_PATH_SOURCE)/external/audiodcremoveflt \
+        $(MTK_PATH_SOURCE)/external/AudioCompensationFilter \
+        $(MTK_PATH_SOURCE)/external/AudioComponentEngine \
+        $(MTK_PATH_SOURCE)/hardware/audio/common/aud_drv \
+        $(MTK_PATH_SOURCE)/hardware/audio/common/ \
+        $(MTK_PATH_SOURCE)/hardware/audio/common/include \
+        $(MTK_PATH_SOURCE)/hardware/audio/common/V3/include \
+        $(MTK_PATH_CUSTOM)/cgen/inc \
+        $(MTK_PATH_CUSTOM)/cgen/cfgfileinc \
+        $(MTK_PATH_CUSTOM)/cgen/cfgdefault \
+        $(MTK_PATH_CUSTOM)/../common/cgen/inc \
+        $(MTK_PATH_CUSTOM)/../common/cgen/cfgfileinc \
+        $(MTK_PATH_CUSTOM)/../common/cgen/cfgdefault \
+        $(MTK_PATH_SOURCE)/external/AudioDCRemoval \
+        $(MTK_PATH_SOURCE)/external/blisrc/blisrc32 \
+        $(MTK_PATH_SOURCE)/external/limiter \
+        $(MTK_PATH_SOURCE)/external/shifter \
+        $(MTK_PATH_SOURCE)/external/bessound_HD \
+        $(MTK_PATH_SOURCE)/external/bessound \
+        $(MTK_PATH_SOURCE)/external/audiocustparam \
+
+ifeq ($(MTK_AUDIO),yes)
+    LOCAL_CFLAGS += -DMTK_AUDIO
+    LOCAL_CFLAGS += -DMTK_AUDIO_DEBUG
+endif
+endif
+#MTK_AUDIO E
+
 include $(BUILD_EXECUTABLE)

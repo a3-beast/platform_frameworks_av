@@ -142,6 +142,12 @@ struct NuPlayer::Source : public AHandler {
         return INVALID_OPERATION;
     }
 
+    //mtk add
+    virtual status_t setVendorMeta(bool /*audio*/, const sp<MetaData> & /*meta*/)
+    {
+        return INVALID_OPERATION;
+    }
+
 protected:
     virtual ~Source() {}
 
@@ -158,6 +164,10 @@ protected:
 
 private:
     sp<AMessage> mNotify;
+
+    //mtkadd+
+public:
+    virtual void setParams(const sp<MetaData> &) {};
 
     DISALLOW_EVIL_CONSTRUCTORS(Source);
 };

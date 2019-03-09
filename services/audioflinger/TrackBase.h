@@ -215,6 +215,17 @@ protected:
     audio_io_handle_t   mThreadIoHandle; // I/O handle of the thread the track is attached to
     audio_port_handle_t mPortId; // unique ID for this track used by audio policy
     bool                mIsInvalid; // non-resettable latch, set by invalidate()
+// <MTK_AUDIO_DEBUG
+protected:
+    unsigned int        mTrackCount;
+// MTK_AUDIO_DEBUG>
+//<MTK_AUDIO_FIX_DEFAULT_DEFECT
+public:
+    bool                       mPauseFlag;
+    bool                       mPauseFlagCanRelease;
+    Condition                  mPauseCond;
+    Mutex                      mPauseCondLock;
+//MTK_AUDIO_FIX_DEFAULT_DEFECT>
 };
 
 // PatchProxyBufferProvider interface is implemented by PatchTrack and PatchRecord.

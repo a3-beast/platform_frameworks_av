@@ -46,6 +46,7 @@ class IOMX;
 class IRemoteDisplay;
 class IRemoteDisplayClient;
 class MediaRecorderClient;
+struct RemoteDisplay;
 
 #define CALLBACK_ANTAGONIZER 0
 #if CALLBACK_ANTAGONIZER
@@ -239,6 +240,7 @@ public:
                                        audio_session_t audioSessionId);
 
     virtual sp<IMediaCodecList> getCodecList() const;
+    virtual sp<IHDCP>           makeHDCP(bool createEncryptionModule);
 
     virtual sp<IRemoteDisplay> listenForRemoteDisplay(const String16 &opPackageName,
             const sp<IRemoteDisplayClient>& client, const String8& iface);
@@ -384,6 +386,7 @@ private:
         // Modular DRM
         virtual status_t prepareDrm(const uint8_t uuid[16], const Vector<uint8_t>& drmSessionId);
         virtual status_t releaseDrm();
+        void setDataSource_drm_proHandle(status_t status);
         // AudioRouting
         virtual status_t setOutputDevice(audio_port_handle_t deviceId);
         virtual status_t getRoutedDeviceId(audio_port_handle_t* deviceId);
@@ -514,6 +517,8 @@ private:
 #if CALLBACK_ANTAGONIZER
                     Antagonizer*                  mAntagonizer;
 #endif
+    bool      mIsOMADrm;
+    String8   mDrmProc;
     }; // Client
 
 // ----------------------------------------------------------------------------
@@ -525,6 +530,12 @@ private:
                 SortedVector< wp<Client> >  mClients;
                 SortedVector< wp<MediaRecorderClient> > mMediaRecorderClients;
                 int32_t                     mNextConnId;
+
+public:
+    virtual status_t            enableRemoteDisplay(const char *iface);
+    virtual status_t            enableRemoteDisplay(const char *iface, const uint32_t wfdFlags);
+private:
+    sp<RemoteDisplay>           mRemoteDisplay;
 };
 
 // ----------------------------------------------------------------------------

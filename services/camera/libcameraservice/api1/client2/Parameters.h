@@ -30,8 +30,6 @@
 #include <camera/CameraParameters2.h>
 #include <camera/CameraMetadata.h>
 
-#include "common/CameraDeviceBase.h"
-
 namespace android {
 namespace camera2 {
 
@@ -243,7 +241,7 @@ struct Parameters {
         };
         DefaultKeyedVector<uint8_t, OverrideModes> sceneModeOverrides;
         bool isExternalCamera;
-        float defaultFocalLength;
+        float minFocalLength;
         bool useFlexibleYuv;
         Size maxJpegSize;
         Size maxZslSize;
@@ -266,10 +264,10 @@ struct Parameters {
     ~Parameters();
 
     // Sets up default parameters
-    status_t initialize(CameraDeviceBase *device, int deviceVersion);
+    status_t initialize(const CameraMetadata *info, int deviceVersion);
 
     // Build fast-access device static info from static info
-    status_t buildFastInfo(CameraDeviceBase *device);
+    status_t buildFastInfo();
     // Query for quirks from static info
     status_t buildQuirks();
 
@@ -302,9 +300,6 @@ struct Parameters {
     // whether zero shutter lag should be used for non-recording operation
     bool useZeroShutterLag() const;
 
-    // Get default focal length
-    status_t getDefaultFocalLength(CameraDeviceBase *camera);
-
     // Calculate the crop region rectangle, either tightly about the preview
     // resolution, or a region just based on the active array; both take
     // into account the current zoom level.
@@ -331,7 +326,7 @@ struct Parameters {
     static const char* wbModeEnumToString(uint8_t wbMode);
     static int effectModeStringToEnum(const char *effectMode);
     static int abModeStringToEnum(const char *abMode);
-    static int sceneModeStringToEnum(const char *sceneMode, uint8_t defaultScene);
+    static int sceneModeStringToEnum(const char *sceneMode);
     static flashMode_t flashModeStringToEnum(const char *flashMode);
     static const char* flashModeEnumToString(flashMode_t flashMode);
     static focusMode_t focusModeStringToEnum(const char *focusMode);
@@ -439,7 +434,6 @@ private:
     Size getMaxSize(const Vector<Size>& sizes);
 
     int mDeviceVersion;
-    uint8_t mDefaultSceneMode;
 };
 
 // This class encapsulates the Parameters class so that it can only be accessed

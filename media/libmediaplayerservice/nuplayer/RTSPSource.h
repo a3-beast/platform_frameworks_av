@@ -161,6 +161,13 @@ private:
     bool sourceNearEOS(bool audio);
     bool sourceReachedEOS(bool audio);
 
+public:
+    //add by mtk, just for record PAUSE state
+    virtual void pause(){mPause = true;};
+    virtual void resume(){mPause = false;};
+private:
+    bool mPause;
+
     DISALLOW_EVIL_CONSTRUCTORS(RTSPSource);
 };
 

@@ -27,6 +27,11 @@
 #include <media/IMediaHTTPService.h>
 #include <media/mediametadataretriever.h>
 #include <private/media/VideoFrame.h>
+#include <stagefright/AVStageExtensions.h>
+
+#ifdef MTK_DRM_APP
+#include <drmutils/drm_utils_mtk.h>
+#endif
 
 namespace android {
 
@@ -81,10 +86,23 @@ MediaScanResult StagefrightMediaScanner::processFileInternal(
         return MEDIA_SCAN_RESULT_SKIPPED;
     }
 
-    if (!FileHasAcceptableExtension(extension)) {
+    if (!FileHasAcceptableExtension(extension)
+        && !AVStageUtils::get()->isVendorAcceptableExtension(extension)) {
         return MEDIA_SCAN_RESULT_SKIPPED;
     }
 
+#ifdef MTK_DRM_APP
+    // add dcf meta data for dcf file
+    // check extension first
+    ALOGV("processFileInternal() : the extension: %s", extension);
+    bool isOMADrmDcf = false;
+    if (0 == strcasecmp(extension, ".dcf")) {
+        MediaScanResult ScanResult = ScanDcf(path, client, &isOMADrmDcf);
+        if ((isOMADrmDcf == true) && (ScanResult == MEDIA_SCAN_RESULT_SKIPPED)) {
+            return ScanResult;
+        }
+    }
+#endif
     sp<MediaMetadataRetriever> mRetriever(new MediaMetadataRetriever);
 
     int fd = open(path, O_RDONLY | O_LARGEFILE);
@@ -138,6 +156,14 @@ MediaScanResult StagefrightMediaScanner::processFileInternal(
     for (size_t i = 0; i < kNumEntries; ++i) {
         const char *value;
         if ((value = mRetriever->extractMetadata(kKeyMap[i].key)) != NULL) {
+#ifdef MTK_DRM_APP
+            if (kKeyMap[i].key == METADATA_KEY_IS_DRM) {
+                if (isOMADrmDcf) {
+                    ALOGD("set METADATA_KEY_IS_DRM to 1 for OMA DRM v1.");
+                    value = "1";
+                }
+            }
+#endif
             status = client.addStringTag(kKeyMap[i].tag, value);
             if (status != OK) {
                 return MEDIA_SCAN_RESULT_ERROR;

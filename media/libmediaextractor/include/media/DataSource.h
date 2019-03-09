@@ -55,6 +55,7 @@ public:
     virtual sp<DecryptHandle> DrmInitialization(const char * /*mime*/ = NULL) {
         return NULL;
     }
+    virtual void getDrmInfo(sp<DecryptHandle> &/*handle*/, DrmManagerClient ** /*client*/) {};
 
     virtual String8 getUri() {
         return String8();

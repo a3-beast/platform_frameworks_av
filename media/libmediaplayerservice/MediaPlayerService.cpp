@@ -78,7 +78,12 @@
 #include "TestPlayerStub.h"
 #include "nuplayer/NuPlayerDriver.h"
 
+#include "HDCP.h"
 #include "HTTPBase.h"
+#include "RemoteDisplay.h"
+#ifdef MTK_DRM_APP
+#include <drmutils/drm_utils_mtk.h>
+#endif
 
 static const int kDumpLockRetries = 50;
 static const int kDumpLockSleepUs = 20000;
@@ -251,6 +256,67 @@ void unmarshallAudioAttributes(const Parcel& parcel, audio_attributes_t *attribu
 
 
 namespace android {
+// wfd
+// add the declaration of checkPermission to avoid the using error
+static bool checkPermission(const char* permissionString);
+status_t MediaPlayerService::enableRemoteDisplay(const char *iface) {
+    if (!checkPermission("android.permission.CONTROL_WIFI_DISPLAY")) {
+        return PERMISSION_DENIED;
+    }
+
+    Mutex::Autolock autoLock(mLock);
+
+    if (iface != NULL) {
+        if (mRemoteDisplay != NULL) {
+            return INVALID_OPERATION;
+        }
+
+        mRemoteDisplay = new RemoteDisplay(String16(""), NULL /* client */, iface);
+        return OK;
+    }
+
+    if (mRemoteDisplay != NULL) {
+        mRemoteDisplay->dispose();
+        mRemoteDisplay.clear();
+    }
+
+
+    return OK;
+}
+
+status_t MediaPlayerService::enableRemoteDisplay(const char *iface, const uint32_t wfdFlags) {
+    if (!checkPermission("android.permission.CONTROL_WIFI_DISPLAY")) {
+        return PERMISSION_DENIED;
+    }
+
+    Mutex::Autolock autoLock(mLock);
+
+    if (iface != NULL) {
+        if (mRemoteDisplay != NULL) {
+            return INVALID_OPERATION;
+        }
+
+    #ifdef MTK_WFD_SINK_SUPPORT
+        if (wfdFlags == WifiDisplaySink::FLAG_SIGMA_TEST_MODE) {
+            mRemoteDisplay = new RemoteDisplay(
+                NULL /* client*/, iface, (const sp<IGraphicBufferProducer> &)NULL);
+        }
+        else
+    #endif /* MTK_WFD_SINK_SUPPORT */
+        {
+            mRemoteDisplay = new RemoteDisplay(
+                String16(""), NULL /* client */, iface, wfdFlags);
+        }
+        return OK;
+    }
+
+    if (mRemoteDisplay != NULL) {
+        mRemoteDisplay->dispose();
+        mRemoteDisplay.clear();
+    }
+
+    return OK;
+}
 
 extern ALooperRoster gLooperRoster;
 
@@ -335,13 +401,18 @@ sp<IMediaCodecList> MediaPlayerService::getCodecList() const {
     return MediaCodecList::getLocalInstance();
 }
 
-sp<IRemoteDisplay> MediaPlayerService::listenForRemoteDisplay(
-        const String16 &/*opPackageName*/,
-        const sp<IRemoteDisplayClient>& /*client*/,
-        const String8& /*iface*/) {
-    ALOGE("listenForRemoteDisplay is no longer supported!");
+sp<IHDCP> MediaPlayerService::makeHDCP(bool createEncryptionModule) {
+    return new HDCP(createEncryptionModule);
+}
 
-    return NULL;
+sp<IRemoteDisplay> MediaPlayerService::listenForRemoteDisplay(
+        const String16 &opPackageName,
+        const sp<IRemoteDisplayClient>& client, const String8& iface) {
+    if (!checkPermission("android.permission.CONTROL_WIFI_DISPLAY")) {
+        return NULL;
+    }
+
+    return new RemoteDisplay(opPackageName, client, iface.string());
 }
 
 status_t MediaPlayerService::AudioOutput::dump(int fd, const Vector<String16>& args) const
@@ -578,6 +649,7 @@ MediaPlayerService::Client::Client(
     ALOGD("create Antagonizer");
     mAntagonizer = new Antagonizer(mListener);
 #endif
+    mIsOMADrm = false;
 }
 
 MediaPlayerService::Client::~Client()
@@ -789,6 +861,7 @@ status_t MediaPlayerService::Client::setDataSource_post(
         Mutex::Autolock lock(mLock);
         mPlayer = p;
     }
+    setDataSource_drm_proHandle(status);
     return status;
 }
 
@@ -825,6 +898,15 @@ status_t MediaPlayerService::Client::setDataSource(
         return mStatus = status;
     } else {
         player_type playerType = MediaPlayerFactory::getPlayerType(this, url);
+#ifdef MTK_DRM_APP
+        mIsOMADrm = IsOMADrm(url);
+        if (mIsOMADrm == true) {
+            mDrmProc = GetDrmProc(mPid);
+            if ((DrmCheck(mDrmProc, url)!= OK)) {
+                return UNKNOWN_ERROR;
+            }
+        }
+#endif
         sp<MediaPlayerBase> p = setDataSource_pre(playerType);
         if (p == NULL) {
             return NO_INIT;
@@ -861,7 +943,15 @@ status_t MediaPlayerService::Client::setDataSource(int fd, int64_t offset, int64
         length = sb.st_size - offset;
         ALOGV("calculated length = %lld", (long long)length);
     }
-
+#ifdef MTK_DRM_APP
+    mIsOMADrm = IsOMADrm(fd);
+    if (mIsOMADrm == true) {
+        mDrmProc = GetDrmProc(mPid);
+        if ((DrmCheck(mDrmProc, fd)!= OK)) {
+            return UNKNOWN_ERROR;
+        }
+    }
+#endif
     player_type playerType = MediaPlayerFactory::getPlayerType(this,
                                                                fd,
                                                                offset,
@@ -1523,6 +1613,18 @@ status_t MediaPlayerService::Client::releaseDrm()
     ALOGV("releaseDrm ret: %d", ret);
 
     return ret;
+}
+void MediaPlayerService::Client::setDataSource_drm_proHandle( status_t status ) {
+    if (mIsOMADrm && status == NO_ERROR) {
+#ifdef MTK_DRM_APP
+        ALOGD("setDataSource with fd: save process info: [%s]", mDrmProc.string());
+        Parcel request;
+        request.writeString8(mDrmProc);
+        request.setDataPosition(0);
+        setParameter(KEY_PARAMETER_DRM_CLIENT_PROC, request);
+#endif
+    }
+
 }
 
 status_t MediaPlayerService::Client::setOutputDevice(audio_port_handle_t deviceId)

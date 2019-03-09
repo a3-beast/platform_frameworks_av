@@ -311,6 +311,7 @@ class Camera3Stream :
      *
      */
     status_t         getBuffer(camera3_stream_buffer *buffer,
+            nsecs_t waitBufferTimeout,
             const std::vector<size_t>& surface_ids = std::vector<size_t>());
 
     /**
@@ -482,7 +483,6 @@ class Camera3Stream :
     // after the HAL has provided usage and max_buffers values. After this call,
     // the stream must be ready to produce all buffers for registration with
     // HAL.
-    // Returns NO_INIT or DEAD_OBJECT if the queue has been abandoned.
     virtual status_t configureQueueLocked() = 0;
 
     // Get the total number of buffers in the queue

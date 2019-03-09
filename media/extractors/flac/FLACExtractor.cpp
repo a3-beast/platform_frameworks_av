@@ -482,6 +482,21 @@ static void copyTrespass(
     TRESPASS();
 }
 
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+// mtk add: for 24bit audio feature.
+// copy samples to 24bits' buffer, little endian
+static void copyTo24(FLAC__int8 *dst, const int * src[FLACParser::kMaxChannels], unsigned nSamples, unsigned nChannels) {
+    for (unsigned i = 0; i < nSamples; ++i) {
+        for (unsigned c = 0; c < nChannels; c++) {
+            FLAC__int32 temp = (src[c][i] << 8) >> 8;
+            *dst++ = temp & 0xFF;
+            *dst++ = (temp >> 8) & 0xFF;
+            *dst++ = (temp >> 16) & 0xFF;
+        }
+    }
+}
+#endif
+
 // FLACParser
 
 FLACParser::FLACParser(
@@ -583,6 +598,9 @@ status_t FLACParser::init()
         case 48000:
         case 88200:
         case 96000:
+        // mtk add: 176.4k and 192k
+        case 176400:
+        case 192000:
             break;
         default:
             ALOGE("unsupported sample rate %u", getSampleRate());
@@ -620,6 +638,9 @@ status_t FLACParser::init()
             // sample rate is non-zero, so division by zero not possible
             mTrackMetadata->setInt64(kKeyDuration,
                     (getTotalSamples() * 1000000LL) / getSampleRate());
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+            if (getBitsPerSample() == 24) mTrackMetadata->setInt32(kKeyBitWidth, 24);
+#endif
         }
     } else {
         ALOGE("missing STREAMINFO");
@@ -636,6 +657,12 @@ void FLACParser::allocateBuffers()
     CHECK(mGroup == NULL);
     mGroup = new MediaBufferGroup;
     mMaxBufferSize = getMaxBlockSize() * getChannels() * sizeof(short);
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+    if (getBitsPerSample() == 24) {
+        mMaxBufferSize = getMaxBlockSize() * getChannels() * sizeof(FLAC__int8) * 3;
+    }
+    mTrackMetadata->setInt32(kKeyFLACMaxBufferSize, mMaxBufferSize);
+#endif
     mGroup->add_buffer(MediaBufferBase::Create(mMaxBufferSize));
 }
 
@@ -656,7 +683,7 @@ MediaBufferBase *FLACParser::readBuffer(bool doSeek, FLAC__uint64 sample)
             ALOGE("FLACParser::readBuffer seek to sample %lld failed", (long long)sample);
             return NULL;
         }
-        ALOGV("FLACParser::readBuffer seek to sample %lld succeeded", (long long)sample);
+        ALOGD("FLACParser::readBuffer seek to sample %lld succeeded", (long long)sample);
     } else {
         if (!FLAC__stream_decoder_process_single(mDecoder)) {
             ALOGE("FLACParser::readBuffer process_single failed");
@@ -689,11 +716,35 @@ MediaBufferBase *FLACParser::readBuffer(bool doSeek, FLAC__uint64 sample)
         return NULL;
     }
     size_t bufferSize = blocksize * getChannels() * sizeof(short);
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+    if (getBitsPerSample() == 24) {
+        bufferSize = blocksize * getChannels() * sizeof(FLAC__int8) * 3;
+    }
+#endif
     CHECK(bufferSize <= mMaxBufferSize);
     short *data = (short *) buffer->data();
     buffer->set_range(0, bufferSize);
     // copy PCM from FLAC write buffer to our media buffer, with interleaving
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+    if (getBitsPerSample() == 24) {
+        copyTo24((FLAC__int8 *)data, mWriteBuffer, blocksize, getChannels());
+    } else
+#endif
     (*mCopy)(data, mWriteBuffer, blocksize, getChannels());
+
+/*
+    // add for dump data
+    char filename[128] = {0};
+    sprintf(filename, "/sdcard/flac_output.pcm");
+    FILE *fpin = fopen(filename, "ab");
+    if (fpin) {
+        fwrite(data, 1, bufferSize, fpin);
+        fclose(fpin);
+    } else {
+        ALOGI("failed to open %s", filename);
+    }
+*/
+
     // fill in buffer metadata
     CHECK(mWriteHeader.number_type == FLAC__FRAME_NUMBER_TYPE_SAMPLE_NUMBER);
     FLAC__uint64 sampleNumber = mWriteHeader.number.sample_number;
@@ -716,7 +767,7 @@ FLACSource::FLACSource(
 {
     ALOGV("FLACSource::FLACSource");
     // re-use the same track metadata passed into constructor from FLACExtractor
-    mParser = new FLACParser(mDataSource);
+    mParser = new FLACParser(mDataSource,0,&mTrackMetadata);
     mInitCheck  = mParser->initCheck();
 }
 
@@ -771,8 +822,11 @@ status_t FLACSource::read(
         } else {
             // sample and total samples are both zero-based, and seek to EOF ok
             sample = (seekTimeUs * mParser->getSampleRate()) / 1000000LL;
+            ALOGD("FLACSource::read(seekTimeUs = %lld, sample = %llu)",
+                (long long)seekTimeUs, (unsigned long long)sample);
             if (sample >= mParser->getTotalSamples()) {
                 sample = mParser->getTotalSamples();
+                ALOGD("set sample = total_samples = %llu", (unsigned long long)sample);
             }
         }
         buffer = mParser->readBuffer(sample);
@@ -837,13 +891,44 @@ status_t FLACExtractor::getMetaData(MetaDataBase &meta)
 
 bool SniffFLAC(DataSourceBase *source, float *confidence)
 {
+    // mtk add: skip ID3v2 tag in flac
+    off64_t pos = 0;
+
+    for (;;) {
+        uint8_t id3header[10];
+        if (source->readAt(pos, id3header, sizeof(id3header))
+                < (ssize_t)sizeof(id3header)) {
+            return false;
+        }
+
+        if (memcmp("ID3", id3header, 3)) {
+            break;
+        }
+
+        // Skip the ID3v2 header.
+
+        size_t len =
+            ((id3header[6] & 0x7f) << 21)
+            | ((id3header[7] & 0x7f) << 14)
+            | ((id3header[8] & 0x7f) << 7)
+            | (id3header[9] & 0x7f);
+
+        len += 10;
+
+        pos += len;
+
+        ALOGV("skipped ID3 tag, new starting offset is %lld (0x%016llx)",
+                (long long)pos, (long long)pos);
+    }
+
     // first 4 is the signature word
     // second 4 is the sizeof STREAMINFO
     // 042 is the mandatory STREAMINFO
     // no need to read rest of the header, as a premature EOF will be caught later
+    // mtk add: the first bit of 'second 4' is last-metadata-block flag, and it can be 0 or 1 according to spec.
     uint8_t header[4+4];
-    if (source->readAt(0, header, sizeof(header)) != sizeof(header)
-            || memcmp("fLaC\0\0\0\042", header, 4+4))
+    if (source->readAt(pos, header, sizeof(header)) != sizeof(header)
+            || (memcmp("fLaC\0\0\0\042", header, 4+4) && memcmp("fLaC\200\0\0\042", header, 4+4)))
     {
         return false;
     }

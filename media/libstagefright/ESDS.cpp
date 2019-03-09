@@ -235,7 +235,14 @@ status_t ESDS::parseDecoderConfigDescriptor(size_t offset, size_t size) {
     }
 
     if (tag != kTag_DecoderSpecificInfo) {
+#if 1
+    //mtkadd support mp3 audio
+    ALOGW("No Decoder Specific Info(0x05) in esds");
+    if (mObjectTypeIndication != 0x6B && mObjectTypeIndication != 0x69)
+        return ERROR_UNSUPPORTED;
+#else
         return ERROR_MALFORMED;
+#endif
     }
 
     mDecoderSpecificOffset = sub_offset;

@@ -89,6 +89,17 @@ struct NuPlayer::Renderer : public AHandler {
             uint32_t flags,
             bool isStreaming,
             const sp<AMessage> &notify);
+    //mtkadd,set AudioDecoder error flag
+    void setAudioDecoderError(bool isAudioDecoderErr) {
+        Mutex::Autolock autoLock(mAudioDecErrLock);
+        ALOGD("setAudioDecoderError isAudioDecoderErr:%d",isAudioDecoderErr);
+        mIsAudioDecoderErr = isAudioDecoderErr;
+    }
+    //mtkadd,get AudioDecoder error flag
+    bool getAudioDecoderError() {
+        Mutex::Autolock autoLock(mAudioDecErrLock);
+        return mIsAudioDecoderErr;
+    }
 
     enum {
         kWhatEOS                      = 'eos ',
@@ -219,6 +230,11 @@ private:
     bool mUseAudioCallback;
 
     sp<AWakeLock> mWakeLock;
+    uint32_t mLastFrameAt;  // for start & seek not smooth
+    int64_t mPadding;  // for start & seek not smooth
+    //mtkadd for AudioDecoder error
+    bool mIsAudioDecoderErr;
+    Mutex mAudioDecErrLock;
 
     status_t getCurrentPositionOnLooper(int64_t *mediaUs);
     status_t getCurrentPositionOnLooper(

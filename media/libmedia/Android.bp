@@ -151,9 +151,14 @@ filegroup {
 cc_library {
     name: "libmedia",
 
+    defaults: [
+         "mtk_libmedia_defaults",
+    ],
+
     srcs: [
         ":mediaupdateservice_aidl",
         "IDataSource.cpp",
+        "IHDCP.cpp",
         "BufferingSettings.cpp",
         "mediaplayer.cpp",
         "IMediaHTTPConnection.cpp",
@@ -203,6 +208,7 @@ cc_library {
     ],
 
     shared_libs: [
+        "libui",
         "android.hidl.token@1.0-utils",
         "liblog",
         "libcutils",
@@ -322,4 +328,11 @@ cc_library {
             cfi: true,
         },
     },
+}
+cc_defaults {
+    name: "mtk_libmedia_defaults",
+
+    srcs: [
+        "mtkWhiteList.cpp"
+    ],
 }

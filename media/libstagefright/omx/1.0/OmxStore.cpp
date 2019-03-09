@@ -64,7 +64,9 @@ OmxStore::OmxStore(
         // TODO: Currently, preferPlatformNodes information is not available in
         // the xml file. Once we have a way to provide this information, it
         // should be parsed properly.
-        role.preferPlatformNodes = rolePair.first.compare(0, 5, "audio") == 0;
+        // force preferPlatformNodes to 0, in order to use mediatek audio decoder
+        //role.preferPlatformNodes = rolePair.first.compare(0, 5, "audio") == 0;
+        role.preferPlatformNodes = 0;
         hidl_vec<NodeInfo>& nodeList = role.nodes;
         nodeList.resize(rolePair.second.nodeList.size());
         size_t j = 0;

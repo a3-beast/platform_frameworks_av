@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,6 +116,14 @@ struct ATSParser::Program : public RefBase {
     uint64_t firstPTS() const {
         return mFirstPTS;
     }
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk duration calculate method and local seek
+    int64_t getPTS();
+    bool getDequeueState();
+
+    // make mParser public inorder to use it check if local or streaming source when seek.
+    ATSParser *mParser;
+#endif
 
     void updateCasSessions();
 
@@ -123,7 +136,9 @@ private:
         int32_t mCASystemId;
     };
 
+#ifndef MTK_SEEK_AND_DURATION
     ATSParser *mParser;
+#endif
     unsigned mProgramNumber;
     unsigned mProgramMapPID;
     KeyedVector<unsigned, sp<Stream> > mStreams;
@@ -249,6 +264,14 @@ private:
     bool ensureBufferCapacity(size_t size);
 
     DISALLOW_EVIL_CONSTRUCTORS(Stream);
+#ifdef MTK_SEEK_AND_DURATION
+
+public:
+    int64_t getPTS();
+
+private:
+    int64_t mMaxTimeUs;
+#endif
 };
 
 struct ATSParser::PSISection : public RefBase {
@@ -503,6 +526,13 @@ status_t ATSParser::Program::parseProgramMap(ABitReader *br) {
     // descriptors
     CADescriptor programCA;
     bool hasProgramCA = findCADescriptor(br, program_info_length, &programCA);
+// add for mtk
+    // for bug fix of scrambled file when local playback, ALPS03411621
+    if (hasProgramCA && (mParser->mFlags & TS_SOURCE_IS_LOCAL)) {
+        ALOGD("LOCAL PLAYBACK, set hasProgramCA(%d) to 0", hasProgramCA);
+        hasProgramCA = 0;
+    }
+// end of add for mtk
     if (hasProgramCA && !mParser->mCasManager->addProgram(
             mProgramNumber, programCA)) {
         return ERROR_MALFORMED;
@@ -532,6 +562,13 @@ status_t ATSParser::Program::parseProgramMap(ABitReader *br) {
 
         CADescriptor streamCA;
         bool hasStreamCA = findCADescriptor(br, ES_info_length, &streamCA);
+// add for mtk
+        // for bug fix of scrambled file when local playback, ALPS03411621
+        if (hasStreamCA && (mParser->mFlags & TS_SOURCE_IS_LOCAL)) {
+            ALOGD("LOCAL PLAYBACK, set hasStreamCA(%d) to 0", hasStreamCA);
+            hasStreamCA = 0;
+        }
+// end of add for mtk
         if (hasStreamCA && !mParser->mCasManager->addStream(
                 mProgramNumber, elementaryPID, streamCA)) {
             return ERROR_MALFORMED;
@@ -610,6 +647,8 @@ status_t ATSParser::Program::parseProgramMap(ABitReader *br) {
 
             isAddingScrambledStream |= info.mCASystemId >= 0;
             mStreams.add(info.mPID, stream);
+            ALOGD("Streams:StreamP=%p,mPID=0x%x,mType=0x%x,size=%d,mProgramMapPID=0x%x",
+                this, info.mPID, info.mType, (int)mStreams.size(), mProgramMapPID);
         }
     }
 
@@ -680,6 +719,8 @@ int64_t ATSParser::Program::convertPTSToTimestamp(uint64_t PTS) {
             mFirstPTSValid = true;
             mFirstPTS = PTS;
             PTS = 0;
+            ALOGE("convertPTSToTimestamp: mFirstPTS(0x%llx) mProgramMapPID  0x%x",
+                (long long)mFirstPTS, mProgramMapPID);
         } else if (PTS < mFirstPTS) {
             PTS = 0;
         } else {
@@ -732,6 +773,9 @@ ATSParser::Stream::Stream(
       mPrevPTS(0),
       mQueue(NULL),
       mScrambled(CA_system_ID >= 0) {
+#ifdef MTK_SEEK_AND_DURATION
+    mMaxTimeUs = 0;
+#endif
 
     mSampleEncrypted =
             mStreamType == STREAMTYPE_H264_ENCRYPTED ||
@@ -1016,6 +1060,24 @@ void ATSParser::Stream::signalDiscontinuity(
     mBuffer->setRange(0, 0);
     mSubSamples.clear();
 
+#ifdef MTK_SEEK_AND_DURATION
+    // add for local source, only local seek needed
+    if (mProgram->mParser->mFlags & TS_SOURCE_IS_LOCAL) {
+        if (!mProgram->getDequeueState()) {
+            if (type & DISCONTINUITY_TIME) {
+                int64_t maxtimeUs = 0;
+                if (extra != NULL && extra->findInt64("MaxtimeUs", &maxtimeUs)) {
+                    mMaxTimeUs = maxtimeUs;
+                } else {
+                    mMaxTimeUs = 0;
+                }
+                ALOGV("set MaxTimeUs:%lld", (long long)mMaxTimeUs);
+            }
+            return;
+        }
+    }
+#endif
+
     bool clearFormat = false;
     if (isAudio()) {
         if (type & DISCONTINUITY_AUDIO_FORMAT) {
@@ -1040,6 +1102,19 @@ void ATSParser::Stream::signalDiscontinuity(
 
             extra->setInt64("resume-at-mediaTimeUs", resumeAtMediaTimeUs);
         }
+
+#ifdef MTK_SEEK_AND_DURATION
+        // add for local source, only local seek needed
+        if (mProgram->mParser->mFlags & TS_SOURCE_IS_LOCAL) {
+            mQueue->setSeeking();
+            if (mSource.get()) {      // TODO: clear the data can implemented in mSource
+                mSource->clearKeepFormat();
+                ALOGV("source cleared, %d", mSource == NULL);
+            } else {
+                ALOGE("[error]this stream has not source\n");
+            }
+        }
+#endif
     }
 
     if (mSource != NULL) {
@@ -1050,6 +1125,10 @@ void ATSParser::Stream::signalDiscontinuity(
                  || !strncasecmp(mime, MEDIA_MIMETYPE_VIDEO_SCRAMBLED, 15))){
             mSource->clear();
         } else {
+#ifdef MTK_SEEK_AND_DURATION
+            // add for local source, only local seek needed, queueDiscontinuity will cause fatal NE.
+            if (!(mProgram->mParser->mFlags & TS_SOURCE_IS_LOCAL))
+#endif
             mSource->queueDiscontinuity(type, extra, true);
         }
     }
@@ -1134,6 +1213,7 @@ status_t ATSParser::Stream::parsePES(ABitReader *br, SyncEvent *event) {
             }
 
             if (br->getBits(4) != PTS_DTS_flags) {
+                ALOGE("[CHECK_ERROR]parsePES PTS_DTS_flags = %u fail", PTS_DTS_flags);
                 return ERROR_MALFORMED;
             }
             PTS = ((uint64_t)br->getBits(3)) << 30;
@@ -1155,6 +1235,7 @@ status_t ATSParser::Stream::parsePES(ABitReader *br, SyncEvent *event) {
 
             if (PTS_DTS_flags == 3) {
                 if (optional_bytes_remaining < 5u) {
+                    ALOGD("[CHECK_ERROR]invalid optional_bytes_remaining = %u", optional_bytes_remaining);
                     return ERROR_MALFORMED;
                 }
 
@@ -1526,6 +1607,13 @@ void ATSParser::Stream::onPayloadData(
           (int64_t)PTS - mPrevPTS);
     mPrevPTS = PTS;
 #endif
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk duration calculate method
+    if (!isVideo() && !isAudio() && !mProgram->getDequeueState()) {
+        ALOGD("not video and not audio when inquery pts %d,mElementaryPID:0x%x", mStreamType, mElementaryPID);
+        return;
+    }
+#endif
 
     ALOGV("onPayloadData mStreamType=0x%02x size: %zu", mStreamType, size);
 
@@ -1534,6 +1622,15 @@ void ATSParser::Stream::onPayloadData(
         timeUs = mProgram->convertPTSToTimestamp(PTS);
     }
 
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk duration calculate method and local seek
+    if (timeUs > mMaxTimeUs && (isAudio() || isVideo())) {
+        mMaxTimeUs = timeUs;
+    }
+    if (!mProgram->getDequeueState()) {  // no need parse payload, only get timeUs
+        return;
+    }
+#endif
     status_t err = mQueue->appendData(
             data, size, timeUs, payloadOffset, PES_scrambling_control);
 
@@ -1554,7 +1651,7 @@ void ATSParser::Stream::onPayloadData(
             if (meta != NULL) {
                 ALOGV("Stream PID 0x%08x of type 0x%02x now has data.",
                      mElementaryPID, mStreamType);
-
+#if 0
                 const char *mime;
                 if (meta->findCString(kKeyMIMEType, &mime)
                         && !strcasecmp(mime, MEDIA_MIMETYPE_VIDEO_AVC)) {
@@ -1563,6 +1660,7 @@ void ATSParser::Stream::onPayloadData(
                         continue;
                     }
                 }
+#endif
                 mSource = new AnotherPacketSource(meta);
                 mSource->queueAccessUnit(accessUnit);
                 ALOGV("onPayloadData: created AnotherPacketSource PID 0x%08x of type 0x%02x",
@@ -1667,9 +1765,14 @@ ATSParser::ATSParser(uint32_t flags)
       mNumPCRs(0) {
     mPSISections.add(0 /* PID */, new PSISection);
     mCasManager = new CasManager();
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk duration calculate method and local seek
+    mNeedDequeuePES = true;
+#endif
 }
 
 ATSParser::~ATSParser() {
+    ALOGD("~ATSParser");
 }
 
 status_t ATSParser::feedTSPacket(const void *data, size_t size,
@@ -1697,6 +1800,7 @@ status_t ATSParser::setMediaCas(const sp<ICas> &cas) {
 void ATSParser::signalDiscontinuity(
         DiscontinuityType type, const sp<AMessage> &extra) {
     int64_t mediaTimeUs;
+    ALOGV("signalDiscontinuity %d", type);
     if ((type & DISCONTINUITY_TIME) && extra != NULL) {
         if (extra->findInt64(kATSParserKeyMediaTimeUs, &mediaTimeUs)) {
             mAbsoluteTimeAnchorUs = mediaTimeUs;
@@ -1856,6 +1960,7 @@ status_t ATSParser::parsePID(
         }
 
         if (!section->isCRCOkay()) {
+            ALOGE("CRC not OK..");
             return BAD_VALUE;
         }
         ABitReader sectionBits(section->data(), section->size());
@@ -1928,8 +2033,14 @@ status_t ATSParser::parseAdaptationField(
 
     if (adaptation_field_length > 0) {
         if (adaptation_field_length * 8 > br->numBitsLeft()) {
-            ALOGV("Adaptation field should be included in a single TS packet.");
-            return ERROR_MALFORMED;
+            // add for mtk, bug fix of bad file
+            ALOGE("[TS_ERROR:func=%s, line=%d]: adaptation_field_length=%d > br->numBitsLeft %zu",
+                 __FUNCTION__, __LINE__, adaptation_field_length, br->numBitsLeft());
+            br->skipBits(br->numBitsLeft());
+            return OK;
+            // end of add for mtk
+            // ALOGV("Adaptation field should be included in a single TS packet.");
+            // return ERROR_MALFORMED;
         }
 
         unsigned discontinuity_indicator = br->getBits(1);
@@ -1954,7 +2065,13 @@ status_t ATSParser::parseAdaptationField(
 
         if (PCR_flag) {
             if (adaptation_field_length * 8 < 52) {
-                return ERROR_MALFORMED;
+                // add for mtk, bug fix of bad file
+                ALOGE("[TS_ERROR:func=%s, line=%d]: adaptation_field_length*8=%d < 52",
+                     __FUNCTION__, __LINE__, adaptation_field_length*8);
+                br->skipBits(br->numBitsLeft());
+                return OK;  // add for ALPS03021389
+                // end of add for mtk
+                // return ERROR_MALFORMED;
             }
             br->skipBits(4);
             uint64_t PCR_base = br->getBits(32);
@@ -1996,7 +2113,7 @@ status_t ATSParser::parseTS(ABitReader *br, SyncEvent *event) {
 
     unsigned sync_byte = br->getBits(8);
     if (sync_byte != 0x47u) {
-        ALOGE("[error] parseTS: return error as sync_byte=0x%x", sync_byte);
+        ALOGV("[error] parseTS: return error as sync_byte=0x%x", sync_byte);
         return BAD_VALUE;
     }
 
@@ -2342,4 +2459,48 @@ void ATSParser::Stream::signalNewSampleAesKey(const sp<AMessage> &keyItem) {
     mQueue->signalNewSampleAesKey(keyItem);
 }
 
+// add for mtk, mtk defined interfaces
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk duration calculate method and local seek
+int64_t ATSParser::getMaxPTS() {
+    int64_t maxPTS = 0;
+    for (size_t i = 0; i < mPrograms.size(); ++i) {
+        int64_t pts = mPrograms.editItemAt(i)->getPTS();
+        if (maxPTS < pts) {
+            maxPTS = pts;
+        }
+    }
+    return maxPTS;
+}
+
+// no need to parse payload data when parse duration and seek, only get timeUs.
+void ATSParser::setDequeueState(bool needDequeuePES) {
+    mNeedDequeuePES = needDequeuePES;
+}
+
+bool ATSParser::getDequeueState() {
+    return mNeedDequeuePES;
+}
+
+int64_t ATSParser::Program::getPTS() {
+    int64_t maxPTS = 0;
+    for (size_t i = 0; i < mStreams.size(); ++i) {
+        int64_t pts = mStreams.editValueAt(i)->getPTS();
+        if (maxPTS < pts) {
+            maxPTS = pts;
+        }
+    }
+
+    return maxPTS;
+}
+
+bool ATSParser::Program::getDequeueState() {
+    return mParser->getDequeueState();
+}
+
+int64_t ATSParser::Stream::getPTS() {
+    return mMaxTimeUs;
+}
+#endif
+// end of add for mtk
 }  // namespace android

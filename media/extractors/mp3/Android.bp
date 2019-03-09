@@ -4,6 +4,8 @@ cc_library_shared {
             "MP3Extractor.cpp",
             "VBRISeeker.cpp",
             "XINGSeeker.cpp",
+            "mtkext/MtkMP3ExtractorExt.cpp",
+            "mtkext/TableOfContentThread.cpp",
     ],
 
     include_dirs: [
@@ -14,6 +16,7 @@ cc_library_shared {
         "liblog",
         "libmediaextractor",
         "libstagefright_foundation",
+        "libcutils",
     ],
 
     static_libs: [

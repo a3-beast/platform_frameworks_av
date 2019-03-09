@@ -213,5 +213,4 @@ status_t AudioParameter::getAt(size_t index, String8& key, String8& value) const
         return BAD_VALUE;
     }
 }
-
 } // namespace android

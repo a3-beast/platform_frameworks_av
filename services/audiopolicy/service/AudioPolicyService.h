@@ -238,6 +238,20 @@ public:
             void doOnRecordingConfigurationUpdate(int event, const record_client_info_t *clientInfo,
                     const audio_config_base_t *clientConfig,
                     const audio_config_base_t *deviceConfig, audio_patch_handle_t patchHandle);
+            // MTK_AUDIO
+            virtual status_t setPolicyManagerParameters(int par1, int par2, int par3, int par4);
+             virtual status_t startOutputSamplerate(audio_io_handle_t output,
+                                          audio_stream_type_t stream,
+                                          audio_session_t session, int samplerate);
+             virtual status_t stopOutputSamplerate(audio_io_handle_t output,
+                                                 audio_stream_type_t stream,
+                                                 audio_session_t session,
+                                                 int samplerate);
+             virtual status_t doStopOutputSamplerate(audio_io_handle_t output,
+                                               audio_stream_type_t stream,
+                                               audio_session_t session,
+                                               int samplerate);
+            virtual status_t getCustomAudioVolume(void* pCustomVol);
 
 private:
                         AudioPolicyService() ANDROID_API;
@@ -332,7 +346,9 @@ private:
             UPDATE_AUDIOPATCH_LIST,
             SET_AUDIOPORT_CONFIG,
             DYN_POLICY_MIX_STATE_UPDATE,
-            RECORDING_CONFIGURATION_UPDATE
+            RECORDING_CONFIGURATION_UPDATE,
+            GET_CUSTOM_AUDIO_VOLUME, // MTK_AUDIO
+            STOP_OUTPUT_SAMPLERATE, // MTK_AUDIO
         };
 
         AudioCommandThread (String8 name, const wp<AudioPolicyService>& service);
@@ -378,6 +394,13 @@ private:
                                                         const audio_config_base_t *deviceConfig,
                                                         audio_patch_handle_t patchHandle);
                     void        insertCommand_l(AudioCommand *command, int delayMs = 0);
+                    // MTK_AUDIO
+                    status_t    getCustomAudioVolumeCommand(void* pCustomVol);
+                    void        stopOutputSamplerateCommand(audio_io_handle_t output,
+                                                  audio_stream_type_t stream,
+                                                  audio_session_t session,
+                                                  int samplerate);
+
     private:
         class AudioCommandData;
 
@@ -474,6 +497,24 @@ private:
             struct audio_config_base mDeviceConfig;
             audio_patch_handle_t mPatchHandle;
         };
+
+        // MTK_AUDIO
+        class GetGainTableData : public AudioCommandData {
+        public:
+            GainTableParam mGainTable;
+        };
+        class GetCustomAudioVolumeData : public AudioCommandData {
+        public:
+            AUDIO_CUSTOM_VOLUME_STRUCT mVolConfig;
+        };
+        class StopOutputDataSamplerate : public AudioCommandData {
+        public:
+            audio_io_handle_t mIO;
+            audio_stream_type_t mStream;
+            audio_session_t mSession;
+            int mSamplerate;
+        };
+//MTK_AUDIO_ADD>
 
         Mutex   mLock;
         Condition mWaitWorkCV;
@@ -588,6 +629,8 @@ private:
 
         virtual audio_unique_id_t newAudioUniqueId(audio_unique_id_use_t use);
 
+        /* MTK_AUDIO */
+        virtual status_t getCustomAudioVolume(void* pCustomVol);
      private:
         AudioPolicyService *mAudioPolicyService;
     };
@@ -675,6 +718,7 @@ private:
     // Note: lock acquisition order is always mLock > mEffectsLock:
     // mLock protects AudioPolicyManager methods that can call into audio flinger
     // and possibly back in to audio policy service and acquire mEffectsLock.
+    mutable Mutex mMTKDeviceConnectionLock;     // MTK_AUDIO ALPS03743535
     sp<AudioCommandThread> mAudioCommandThread;     // audio commands thread
     sp<AudioCommandThread> mTonePlaybackThread;     // tone playback thread
     sp<AudioCommandThread> mOutputCommandThread;    // process stop and release output

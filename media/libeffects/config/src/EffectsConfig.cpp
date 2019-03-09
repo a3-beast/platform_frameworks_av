@@ -250,14 +250,14 @@ bool parseStream(const XMLElement& xmlStream, Effects& effects, std::vector<Stre
     return true;
 }
 
-/** Internal version of the public parse(const char* path) where path always exist. */
-ParsingResult parseWithPath(std::string&& path) {
+/** Internal version of the public parse(const char* path) with precondition `path != nullptr`. */
+ParsingResult parseWithPath(const char* path) {
     XMLDocument doc;
-    doc.LoadFile(path.c_str());
+    doc.LoadFile(path);
     if (doc.Error()) {
-        ALOGE("Failed to parse %s: Tinyxml2 error (%d): %s", path.c_str(),
+        ALOGE("Failed to parse %s: Tinyxml2 error (%d): %s", path,
               doc.ErrorID(), doc.ErrorStr());
-        return {nullptr, 0, std::move(path)};
+        return {nullptr, 0, path};
     }
 
     auto config = std::make_unique<Config>();
@@ -295,7 +295,7 @@ ParsingResult parseWithPath(std::string&& path) {
             }
         }
     }
-    return {std::move(config), nbSkippedElements, std::move(path)};
+    return {std::move(config), nbSkippedElements, path};
 }
 
 }; // namespace
@@ -310,14 +310,14 @@ ParsingResult parse(const char* path) {
         if (access(defaultPath.c_str(), R_OK) != 0) {
             continue;
         }
-        auto result = parseWithPath(std::move(defaultPath));
+        auto result = parseWithPath(defaultPath.c_str());
         if (result.parsedConfig != nullptr) {
             return result;
         }
     }
 
     ALOGE("Could not parse effect configuration in any of the default locations.");
-    return {nullptr, 0, ""};
+    return {nullptr, 0, nullptr};
 }
 
 } // namespace effectsConfig

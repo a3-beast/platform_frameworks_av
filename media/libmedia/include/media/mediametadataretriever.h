@@ -70,6 +70,17 @@ enum {
     METADATA_KEY_EXIF_LENGTH     = 34,
 
     // Add more here...
+    // @M OMA DRM v1 implementation
+    METADATA_KEY_DRM_CONTENT_URI = 101,
+    METADATA_KEY_DRM_OFFSET      = 102,
+    METADATA_KEY_DRM_DATALEN     = 103,
+    METADATA_KEY_DRM_RIGHTS_ISSUER = 104,
+    METADATA_KEY_DRM_CONTENT_NAME  = 105,
+    METADATA_KEY_DRM_CONTENT_DES   = 106,
+    METADATA_KEY_DRM_CONTENT_VENDOR = 107,
+    METADATA_KEY_DRM_ICON_URI       = 108,
+    METADATA_KEY_DRM_METHOD     = 109,
+    METADATA_KEY_DRM_MIME       = 110,
 };
 
 class MediaMetadataRetriever: public RefBase

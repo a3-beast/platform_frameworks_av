@@ -141,7 +141,9 @@ status_t AudioSource::start(MetaData *params) {
     if (params && params->findInt64(kKeyTime, &startTimeUs)) {
         mStartTimeUs = startTimeUs;
     }
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     status_t err = mRecord->start();
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     if (err == OK) {
         mStarted = true;
     } else {
@@ -183,8 +185,9 @@ status_t AudioSource::reset() {
     mStopSystemTimeUs = -1;
     mNoMoreFramesToRead = false;
     mFrameAvailableCondition.signal();
-
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     mRecord->stop();
+    ALOGD("%s- %d", __FUNCTION__, __LINE__);
     waitOutstandingEncodingFrames_l();
     releaseQueuedFrames_l();
 
@@ -427,10 +430,21 @@ status_t AudioSource::dataCallback(const AudioRecord::Buffer& audioBuffer) {
 void AudioSource::queueInputBuffer_l(MediaBuffer *buffer, int64_t timeUs) {
     const size_t bufferSize = buffer->range_length();
     const size_t frameSize = mRecord->frameSize();
+// add for mtk
+// android default calculate method will cause little err accumulate when long time recording.
+// as each time the timestampUs is increased by the last timestampUs, rounding err accumulate.
+    mNumFramesReceived += bufferSize / frameSize;
+    const int64_t timestampUs =
+                mStartTimeUs +
+                    ((1000000LL * mNumFramesReceived) +
+                        (mSampleRate >> 1)) / mSampleRate;
+// end of add for mtk
+#if 0
     const int64_t timestampUs =
                 mPrevSampleTimeUs +
                     ((1000000LL * (bufferSize / frameSize)) +
                         (mSampleRate >> 1)) / mSampleRate;
+#endif
 
     if (mNumFramesReceived == 0) {
         buffer->meta_data().setInt64(kKeyAnchorTime, mStartTimeUs);
@@ -439,7 +453,9 @@ void AudioSource::queueInputBuffer_l(MediaBuffer *buffer, int64_t timeUs) {
     buffer->meta_data().setInt64(kKeyTime, mPrevSampleTimeUs);
     buffer->meta_data().setInt64(kKeyDriftTime, timeUs - mInitialReadTimeUs);
     mPrevSampleTimeUs = timestampUs;
+#if 0  // instead by mtk code
     mNumFramesReceived += bufferSize / frameSize;
+#endif
     mBuffersReceived.push_back(buffer);
     mFrameAvailableCondition.signal();
 }

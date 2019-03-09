@@ -217,7 +217,6 @@ CameraSource::CameraSource(
       mNumFramesReceived(0),
       mLastFrameTimestampUs(0),
       mStarted(false),
-      mEos(false),
       mNumFramesEncoded(0),
       mTimeBetweenFrameCaptureUs(0),
       mFirstFrameTimeUs(0),
@@ -682,7 +681,7 @@ status_t CameraSource::initWithCameraAccess(
         err = mCamera->setVideoBufferMode(hardware::ICamera::VIDEO_BUFFER_MODE_DATA_CALLBACK_YUV);
         if (err != OK) {
             ALOGE("%s: Setting video buffer mode to VIDEO_BUFFER_MODE_DATA_CALLBACK_YUV failed: "
-                    "%s (err=%d)", __FUNCTION__, strerror(-err), err);
+                    "(err=%d)", __FUNCTION__, err);
             return err;
         }
     }
@@ -783,7 +782,8 @@ status_t CameraSource::startCameraRecording() {
 }
 
 status_t CameraSource::start(MetaData *meta) {
-    ALOGV("start");
+//   ALOGV("start");
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     CHECK(!mStarted);
     if (mInitCheck != OK) {
         ALOGE("CameraSource is not initialized yet");
@@ -824,7 +824,7 @@ status_t CameraSource::start(MetaData *meta) {
     if ((err = startCameraRecording()) == OK) {
         mStarted = true;
     }
-
+    ALOGD("%s+ %d", __FUNCTION__, __LINE__);
     return err;
 }
 
@@ -881,7 +881,6 @@ status_t CameraSource::reset() {
     {
         Mutex::Autolock autoLock(mLock);
         mStarted = false;
-        mEos = false;
         mStopSystemTimeUs = -1;
         mFrameAvailableCondition.signal();
 
@@ -892,12 +891,20 @@ status_t CameraSource::reset() {
             isTokenValid = true;
         }
         releaseQueuedFrames();
+//  add for mtk
+        int64_t waitEncodingFrameTimes = 0;
+//  ~add for mtk
         while (!mFramesBeingEncoded.empty()) {
             if (NO_ERROR !=
                 mFrameCompleteCondition.waitRelative(mLock,
                         mTimeBetweenFrameCaptureUs * 1000LL + CAMERA_SOURCE_TIMEOUT_NS)) {
                 ALOGW("Timed out waiting for outstanding frames being encoded: %zu",
                     mFramesBeingEncoded.size());
+//  add for mtk
+                waitEncodingFrameTimes++;
+                // every round is 3s, totally wait 1.5 min for buffer returning
+                CHECK(waitEncodingFrameTimes < 30);
+// ~add for mtk
             }
         }
         stopCameraRecording();
@@ -1077,7 +1084,10 @@ status_t CameraSource::read(
 
     {
         Mutex::Autolock autoLock(mLock);
-        while (mStarted && !mEos && mFramesReceived.empty()) {
+//  add for mtk
+        int64_t waitFrameTimes = 0;
+//  ~add for mtk
+        while (mStarted && mFramesReceived.empty()) {
             if (NO_ERROR !=
                 mFrameAvailableCondition.waitRelative(mLock,
                     mTimeBetweenFrameCaptureUs * 1000LL + CAMERA_SOURCE_TIMEOUT_NS)) {
@@ -1088,13 +1098,14 @@ status_t CameraSource::read(
                 }
                 ALOGW("Timed out waiting for incoming camera video frames: %" PRId64 " us",
                     mLastFrameTimestampUs);
+//  add for mtk
+                waitFrameTimes++;
+                CHECK(waitFrameTimes < 15);
+//  ~add for mtk
             }
         }
         if (!mStarted) {
             return OK;
-        }
-        if (mFramesReceived.empty()) {
-            return ERROR_END_OF_STREAM;
         }
         frame = *mFramesReceived.begin();
         mFramesReceived.erase(mFramesReceived.begin());
@@ -1134,8 +1145,6 @@ bool CameraSource::shouldSkipFrameLocked(int64_t timestampUs) {
     if (mStopSystemTimeUs != -1 && timestampUs >= mStopSystemTimeUs) {
         ALOGV("Drop Camera frame at %lld  stop time: %lld us",
                 (long long)timestampUs, (long long)mStopSystemTimeUs);
-        mEos = true;
-        mFrameAvailableCondition.signal();
         return true;
     }
 

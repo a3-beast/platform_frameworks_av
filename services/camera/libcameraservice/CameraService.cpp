@@ -87,7 +87,13 @@ using hardware::camera::common::V1_0::TorchModeStatus;
 // ----------------------------------------------------------------------------
 // Logging support -- this is for debugging only
 // Use "adb shell dumpsys media.camera -v 1" to change it.
+//!++ For MTK debug use
+#ifdef MTKCAM_TARGET_BUILD_USER
 volatile int32_t gLogLevel = 0;
+#else
+volatile int32_t gLogLevel = 2;
+#endif
+//!--
 
 #define LOG1(...) ALOGD_IF(gLogLevel >= 1, __VA_ARGS__);
 #define LOG2(...) ALOGD_IF(gLogLevel >= 2, __VA_ARGS__);
@@ -2024,27 +2030,62 @@ void CameraService::loadSound() {
     Mutex::Autolock lock(mSoundLock);
     LOG1("CameraService::loadSound ref=%d", mSoundRef);
     if (mSoundRef++) return;
-
-    mSoundPlayer[SOUND_SHUTTER] = newMediaPlayer("/product/media/audio/ui/camera_click.ogg");
-    if (mSoundPlayer[SOUND_SHUTTER] == nullptr) {
-        mSoundPlayer[SOUND_SHUTTER] = newMediaPlayer("/system/media/audio/ui/camera_click.ogg");
+    //!++
+    #if 0
+    mSoundPlayer[SOUND_SHUTTER] = newMediaPlayer("/system/media/audio/ui/camera_click.ogg");
+    mSoundPlayer[SOUND_RECORDING_START] = newMediaPlayer("/system/media/audio/ui/VideoRecord.ogg");
+    mSoundPlayer[SOUND_RECORDING_STOP] = newMediaPlayer("/system/media/audio/ui/VideoStop.ogg");
+    #else
+    if( pthread_create(&mloadSoundTThreadHandle, NULL, loadSoundThread, this) != 0 )
+    {
+        ALOGE("loadSound pthread create failed");
     }
-    mSoundPlayer[SOUND_RECORDING_START] = newMediaPlayer("/product/media/audio/ui/VideoRecord.ogg");
-    if (mSoundPlayer[SOUND_RECORDING_START] == nullptr) {
-        mSoundPlayer[SOUND_RECORDING_START] =
-                newMediaPlayer("/system/media/audio/ui/VideoRecord.ogg");
-    }
-    mSoundPlayer[SOUND_RECORDING_STOP] = newMediaPlayer("/product/media/audio/ui/VideoStop.ogg");
-    if (mSoundPlayer[SOUND_RECORDING_STOP] == nullptr) {
-        mSoundPlayer[SOUND_RECORDING_STOP] = newMediaPlayer("/system/media/audio/ui/VideoStop.ogg");
-    }
+    #endif
+    //!--
 }
+
+//!++
+void CameraService::loadSoundImp() {
+    LOG1("[CameraService::loadSoundImp] E");
+    mSoundPlayer[SOUND_SHUTTER] = newMediaPlayer("/system/media/audio/ui/camera_click.ogg");
+    mSoundPlayer[SOUND_RECORDING_START] = newMediaPlayer("/system/media/audio/ui/VideoRecord.ogg");
+    mSoundPlayer[SOUND_RECORDING_STOP] = newMediaPlayer("/system/media/audio/ui/VideoStop.ogg");
+    LOG1("[CameraService::loadSoundImp] X");
+}
+
+bool CameraService::waitloadSoundDone() {
+    if(mloadSoundTThreadHandle != 0)
+    {
+        LOG1("CameraService::waitloadSoundDone E");
+        int s = pthread_join(mloadSoundTThreadHandle, NULL);
+        mloadSoundTThreadHandle = 0;
+        LOG1("CameraService::waitloadSoundDone X");
+        if( s != 0 )
+        {
+            ALOGE("loadSound pthread join error: %d", s);
+            return false;
+        }
+    }
+    return true;
+}
+
+void* CameraService::loadSoundThread(void* arg) {
+    LOG1("[CameraService::loadSoundThread]");
+    CameraService* pCameraService = (CameraService*)arg;
+    pCameraService->loadSoundImp();
+    pthread_exit(NULL);
+    return NULL;
+}
+//!--
 
 void CameraService::releaseSound() {
     Mutex::Autolock lock(mSoundLock);
     LOG1("CameraService::releaseSound ref=%d", mSoundRef);
     if (--mSoundRef) return;
 
+    //!++
+    waitloadSoundDone();
+    //!--
     for (int i = 0; i < NUM_SOUNDS; i++) {
         if (mSoundPlayer[i] != 0) {
             mSoundPlayer[i]->disconnect();
@@ -2058,6 +2099,9 @@ void CameraService::playSound(sound_kind kind) {
 
     LOG1("playSound(%d)", kind);
     Mutex::Autolock lock(mSoundLock);
+    //!++
+    waitloadSoundDone();
+    //!--
     sp<MediaPlayer> player = mSoundPlayer[kind];
     if (player != 0) {
         player->seekTo(0);
@@ -2434,8 +2478,7 @@ bool CameraService::UidPolicy::isUidActive(uid_t uid, String16 callingPackage) {
     return isUidActiveLocked(uid, callingPackage);
 }
 
-static const int64_t kPollUidActiveTimeoutTotalMillis = 300;
-static const int64_t kPollUidActiveTimeoutMillis = 50;
+static const int kPollUidActiveTimeoutMillis = 50;
 
 bool CameraService::UidPolicy::isUidActiveLocked(uid_t uid, String16 callingPackage) {
     // Non-app UIDs are considered always active
@@ -2463,8 +2506,7 @@ bool CameraService::UidPolicy::isUidActiveLocked(uid_t uid, String16 callingPack
             // activity being resumed. The proper fix is very risky, so we temporary add
             // some polling which should happen pretty rarely anyway as the race is hard
             // to hit.
-            active = mActiveUids.find(uid) != mActiveUids.end();
-            if (!active) active = am.isUidActive(uid, callingPackage);
+            active = am.isUidActive(uid, callingPackage);
             if (active) {
                 break;
             }
@@ -2472,15 +2514,11 @@ bool CameraService::UidPolicy::isUidActiveLocked(uid_t uid, String16 callingPack
                 startTimeMillis = uptimeMillis();
             }
             int64_t ellapsedTimeMillis = uptimeMillis() - startTimeMillis;
-            int64_t remainingTimeMillis = kPollUidActiveTimeoutTotalMillis - ellapsedTimeMillis;
+            int64_t remainingTimeMillis = kPollUidActiveTimeoutMillis - ellapsedTimeMillis;
             if (remainingTimeMillis <= 0) {
                 break;
             }
-            remainingTimeMillis = std::min(kPollUidActiveTimeoutMillis, remainingTimeMillis);
-
-            mUidLock.unlock();
             usleep(remainingTimeMillis * 1000);
-            mUidLock.lock();
         } while (true);
 
         if (active) {

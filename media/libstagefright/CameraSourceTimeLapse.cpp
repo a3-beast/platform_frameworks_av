@@ -248,6 +248,15 @@ bool CameraSourceTimeLapse::skipCurrentFrame(int64_t /* timestampUs */) {
 
 bool CameraSourceTimeLapse::skipFrameAndModifyTimeStamp(int64_t *timestampUs) {
     ALOGV("skipFrameAndModifyTimeStamp");
+
+// add for mtk
+// Drop frame before CameraSource and keep time lapse initial status
+    if (mNumFramesReceived < 1) {
+        mLastTimeLapseFrameRealTimestampUs = *timestampUs;
+        return false;
+    }
+// ~add for mtk
+
     if (mLastTimeLapseFrameRealTimestampUs == 0) {
         // First time lapse frame. Initialize mLastTimeLapseFrameRealTimestampUs
         // to current time (timestampUs) and save frame data.

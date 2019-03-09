@@ -19,6 +19,7 @@
 #include "utils/Log.h"
 
 #include <utils/String8.h>
+#include <cutils/properties.h>
 #include <drm/DrmInfo.h>
 #include <drm/DrmInfoEvent.h>
 #include <drm/DrmRights.h>
@@ -38,6 +39,10 @@
 using namespace android;
 
 const String8 DrmManager::EMPTY_STRING("");
+String8 pluginDirPath("/system/lib/drm");
+String8 mtkpluginDirPath("/system/lib/drm/mtkdrm");
+
+
 
 DrmManager::DrmManager() :
     mDecryptSessionId(0),
@@ -88,7 +93,11 @@ void DrmManager::removeUniqueId(int uniqueId) {
 }
 
 status_t DrmManager::loadPlugIns() {
-    String8 pluginDirPath("/system/lib/drm");
+    char property_value[PROPERTY_VALUE_MAX] = { 0 };
+    property_get("ro.vendor.mtk_oma_drm_support", property_value, "");
+    if(!strcmp(property_value ,"1"))
+        loadPlugIns(mtkpluginDirPath);
+    else
     loadPlugIns(pluginDirPath);
     return DRM_NO_ERROR;
 }
@@ -395,6 +404,42 @@ status_t DrmManager::getAllSupportInfo(
     *length = validPlugins;
     return DRM_NO_ERROR;
 }
+
+//Add by rui
+//To pass client's client to drmserver
+
+DecryptHandle* DrmManager::openDecryptSession(
+        int uniqueId, int fd, off64_t offset, off64_t length, const char* mime, pid_t pid) {
+    Mutex::Autolock _l(mDecryptLock);
+    status_t result = DRM_ERROR_CANNOT_HANDLE;
+    Vector<String8> plugInIdList = mPlugInManager.getPlugInIdList();
+
+    DecryptHandle* handle = new DecryptHandle();
+    if (NULL != handle) {
+        handle->decryptId = mDecryptSessionId + 1;
+        //pass client's client pid to drmserver
+        String8 pid_str;
+        pid_str.appendFormat("%d",pid);
+        handle->extendedData.add(String8("ClientPid"),pid_str);
+
+        for (unsigned int index = 0; index < plugInIdList.size(); index++) {
+            String8 plugInId = plugInIdList.itemAt(index);
+            IDrmEngine& rDrmEngine = mPlugInManager.getPlugIn(plugInId);
+            result = rDrmEngine.openDecryptSession(uniqueId, handle, fd, offset, length, mime);
+
+            if (DRM_NO_ERROR == result) {
+                ++mDecryptSessionId;
+                mDecryptSessionMap.add(mDecryptSessionId, &rDrmEngine);
+                break;
+            }
+        }
+    }
+    if (DRM_NO_ERROR != result) {
+        delete handle; handle = NULL;
+    }
+    return handle;
+}
+
 
 DecryptHandle* DrmManager::openDecryptSession(
         int uniqueId, int fd, off64_t offset, off64_t length, const char* mime) {

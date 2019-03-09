@@ -94,6 +94,12 @@ public:
     // until a subsequent read-with-seek. Currently only supported by
     // OMXCodec.
     virtual status_t pause()  = 0;
+
+    //mtkadd to get codec feedback info.
+    virtual status_t setVendorMeta(const sp<MetaData> & meta) = 0;
+    //mtkadd,if TableOfContentThread is enabled,stop
+    virtual status_t stopTocThreadIfTocEnabled() = 0;
+
 };
 
 class BnMediaSource: public BnInterface<IMediaSource>
@@ -123,6 +129,12 @@ public:
     virtual bool supportNonblockingRead() {
         return false;
     }
+
+    virtual status_t setVendorMeta(const sp<MetaData> & /*meta*/) {
+        return ERROR_UNSUPPORTED;
+    }
+
+    virtual status_t stopTocThreadIfTocEnabled() { return NO_ERROR; }
 
     static const size_t kBinderMediaBuffers = 4; // buffers managed by BnMediaSource
     static const size_t kTransferSharedAsSharedThreshold = 4 * 1024;  // if >= shared, else inline

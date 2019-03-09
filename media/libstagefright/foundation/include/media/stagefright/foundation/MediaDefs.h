@@ -81,4 +81,6 @@ enum AudioEncoding {
 
 }  // namespace android
 
+#include "MediaDefs_MTK.h"
+
 #endif  // MEDIA_DEFS_H_

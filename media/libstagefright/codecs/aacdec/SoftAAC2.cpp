@@ -84,6 +84,8 @@ SoftAAC2::SoftAAC2(
       mOutputPortSettingsChange(NONE) {
     initPorts();
     CHECK_EQ(initDecoder(), (status_t)OK);
+    mIsErrorCsdHandled = false;
+    mIsRawAac = false;
 }
 
 SoftAAC2::~SoftAAC2() {
@@ -276,7 +278,9 @@ OMX_ERRORTYPE SoftAAC2::internalGetParameter(
             aacParams->eAACStreamFormat =
                 mIsADTS
                     ? OMX_AUDIO_AACStreamFormatMP4ADTS
-                    : OMX_AUDIO_AACStreamFormatMP4FF;
+                    : (mIsRawAac
+                        ? OMX_AUDIO_AACStreamFormatRAW
+                        : OMX_AUDIO_AACStreamFormatMP4FF);
 
             aacParams->eChannelMode = OMX_AUDIO_ChannelModeStereo;
 
@@ -419,6 +423,10 @@ OMX_ERRORTYPE SoftAAC2::internalSetParameter(
             } else if (aacParams->eAACStreamFormat
                         == OMX_AUDIO_AACStreamFormatMP4ADTS) {
                 mIsADTS = true;
+            } else if (aacParams->eAACStreamFormat
+                        == OMX_AUDIO_AACStreamFormatRAW) {
+                mIsADTS = false;
+                mIsRawAac = true;
             } else {
                 return OMX_ErrorUndefined;
             }
@@ -637,6 +645,16 @@ void SoftAAC2::onQueueFilled(OMX_U32 /* portIndex */) {
                 inBuffer[0] = inHeader->pBuffer + inHeader->nOffset;
                 inBufferLength[0] = inHeader->nFilledLen;
 
+                hexdump(inBuffer[0], inBufferLength[0]);
+                mAACConfigSpecificData[0] = mAACConfigSpecificData[1] = 0;
+                mIsErrorCsdHandled = false;
+                if (inBufferLength[0] == 2) {
+                    mAACConfigSpecificData[0] = *(UCHAR *)(inBuffer[0] + 0);
+                    mAACConfigSpecificData[1] = *(UCHAR *)(inBuffer[0] + 1);
+                } else {
+                    mIsErrorCsdHandled = true;
+                }
+
                 AAC_DECODER_ERROR decoderErr =
                     aacDecoder_ConfigRaw(mAACDecoder,
                                          inBuffer,
@@ -813,6 +831,7 @@ void SoftAAC2::onQueueFilled(OMX_U32 /* portIndex */) {
                         return;
                     }
                 } else {
+                    if (mIsRawAac && !mIsErrorCsdHandled) handleAviWithRawAAC();
                     ALOGW("AAC decoder returned error 0x%4.4x, substituting silence", decoderErr);
 
                     memset(tmpOutBuffer, 0, numOutBytes); // TODO: check for overflow
@@ -1185,6 +1204,28 @@ void SoftAAC2::onPortEnableCompleted(OMX_U32 portIndex, bool enabled) {
             mOutputPortSettingsChange = NONE;
             break;
         }
+    }
+}
+
+void SoftAAC2::handleAviWithRawAAC() {
+    UCHAR* csdTemp[FILEREAD_MAX_LAYERS];
+    UINT csdLength[FILEREAD_MAX_LAYERS] = {0};
+    uint32_t sampleIndex = ((mAACConfigSpecificData[0] & 0x7) << 1) | ((mAACConfigSpecificData[1] & 0x80) >> 7);
+    ALOGD("aviRawAac-csd-before: 0x%x %x", mAACConfigSpecificData[0], mAACConfigSpecificData[1]);
+    if (sampleIndex <= 8) {
+        sampleIndex += 3;
+        mAACConfigSpecificData[0] = (mAACConfigSpecificData[0] & 0xF8) | ((sampleIndex & 0xE) >> 1);
+        mAACConfigSpecificData[1] = (mAACConfigSpecificData[1] & 0x7F) | ((sampleIndex & 0x1) << 7);
+        ALOGD("aviRawAac-csd-after: 0x%x %x", mAACConfigSpecificData[0], mAACConfigSpecificData[1]);
+    }
+    csdTemp[0] = mAACConfigSpecificData;
+    csdLength[0] = 2;
+    mIsErrorCsdHandled = true;
+    AAC_DECODER_ERROR cfgError = aacDecoder_ConfigRaw(mAACDecoder, csdTemp, csdLength);
+    if (cfgError != AAC_DEC_OK) {
+        ALOGW("aacDecoder_ConfigRaw decoderErr = 0x%4.4x", cfgError);
+        mSignalledError = true;
+        notify(OMX_EventError, OMX_ErrorUndefined, cfgError, NULL);
     }
 }
 

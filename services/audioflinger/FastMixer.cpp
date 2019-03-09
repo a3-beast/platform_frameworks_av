@@ -43,6 +43,10 @@
 #include "FastMixer.h"
 #include "TypedLogger.h"
 
+#if defined(MTK_LATENCY_DETECT_PULSE)
+#include "AudioDetectPulse.h"
+#endif // MTK_LATENCY_DETECT_PULSE
+
 namespace android {
 
 /*static*/ const FastMixerState FastMixer::sInitial;
@@ -445,6 +449,14 @@ void FastMixer::onWork()
             memcpy_by_audio_format(buffer, mFormat.mFormat, mMixerBuffer, mMixerBufferFormat,
                     frameCount * Format_channelCount(mFormat));
         }
+
+#if defined(MTK_LATENCY_DETECT_PULSE)
+        if (AudioDetectPulse::getDetectPulse()) {
+            AudioDetectPulse::doDetectPulse(TAG_FAST_MIXER, 800, 0, (void *)buffer, mMixerBufferSize,
+                                            mFormat.mFormat, mSinkChannelCount, mSampleRate);
+        }
+#endif // MTK_LATENCY_DETECT_PULSE
+
         // if non-NULL, then duplicate write() to this non-blocking sink
         NBAIO_Sink* teeSink;
         if ((teeSink = current->mTeeSink) != NULL) {

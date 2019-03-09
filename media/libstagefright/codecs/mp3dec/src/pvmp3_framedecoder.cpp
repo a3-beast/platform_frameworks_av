@@ -299,11 +299,7 @@ ERROR_CODE pvmp3_framedecoder(tPVMP3DecoderExternal *pExt,
         }
 
 
-        // force signed computation; buffer sizes and offsets are all going to be
-        // well within the constraints of 32-bit signed math.
-        bytes_to_discard = pVars->frame_start
-                           - ((int32)pVars->sideInfo.main_data_begin)
-                           - ((int32)main_data_end);
+        bytes_to_discard = pVars->frame_start - pVars->sideInfo.main_data_begin - main_data_end;
 
 
         if (main_data_end > BUFSIZE)   /* check overflow on the buffer */

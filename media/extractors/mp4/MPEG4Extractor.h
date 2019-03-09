@@ -28,6 +28,7 @@
 #include <utils/List.h>
 #include <utils/String8.h>
 #include <utils/Vector.h>
+#include <media/stagefright/foundation/ABuffer.h>
 
 namespace android {
 struct AMessage;
@@ -86,6 +87,9 @@ private:
         int64_t elst_media_time;
         uint64_t elst_segment_duration;
         bool subsample_encryption;
+        uint32_t timescaleFactor; // mtkadd to prevent uint32_t overflow
+        bool isTkhdBoxParsed;  //mtkadd to mark tkhd box is behind stts box
+        bool isTkhdBoxBack;  //mtkadd to mark tkhd box is behind stts box
     };
 
     Vector<SidxEntry> mSidxEntries;
@@ -144,6 +148,19 @@ private:
 
     MPEG4Extractor(const MPEG4Extractor &);
     MPEG4Extractor &operator=(const MPEG4Extractor &);
+
+    //mtkadd support raw and alac
+    status_t parseRawSampleEntry(DataSourceBase *source,
+            Track *track, off64_t data_offset, int32_t chunk_type);
+    status_t adjustRawDefaultFrameSize(Track *track);
+    status_t adjustRawMaxFrameSize(Track *track, int frame_size = 20000);
+    status_t parseALACSampleEntry(DataSourceBase *source,
+            Track *track, off64_t offset);
+    status_t setCodecInfoFromFirstFrame(Track *track);
+    //mtkadd for make esds for utils.
+    sp<ABuffer> MakeESDS(const sp<ABuffer> &csd);
+    void EncodeSize14_1(uint8_t **_ptr, size_t size);
+
 };
 
 bool SniffMPEG4(

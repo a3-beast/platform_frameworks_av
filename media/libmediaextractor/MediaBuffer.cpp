@@ -181,6 +181,8 @@ void MediaBuffer::setObserver(MediaBufferObserver *observer) {
 MediaBufferBase *MediaBuffer::clone() {
     MediaBuffer *buffer = new MediaBuffer(mData, mSize);
     buffer->set_range(mRangeOffset, mRangeLength);
+    // mtkadd: fix memory leak of buffer->mMetaData(allocated in MediaBuffer constructor)
+    if (buffer->mMetaData) delete buffer->mMetaData;
     buffer->mMetaData = new MetaDataBase(*mMetaData);
 
     add_ref();

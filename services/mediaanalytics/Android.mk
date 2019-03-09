@@ -45,4 +45,7 @@ LOCAL_INIT_RC := mediametrics.rc
 LOCAL_CFLAGS := -Werror -Wall -Wno-error=deprecated-declarations
 LOCAL_CLANG := true
 
+#Disable mediametrics in GMO 512M
+ifneq (yes,$(strip $(MTK_GMO_RAM_OPTIMIZE)))
 include $(BUILD_EXECUTABLE)
+endif

@@ -313,6 +313,16 @@ bool AudioInputCollection::isSourceActive(audio_source_t source) const
 
 sp<AudioInputDescriptor> AudioInputCollection::getInputFromId(audio_port_handle_t id) const
 {
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+    sp<AudioInputDescriptor> inputDesc = NULL;
+    for (size_t i = 0; i < size(); i++) {
+        inputDesc = valueAt(i);
+        if (inputDesc->getId() == id) {
+            return inputDesc;
+        }
+    }
+    return NULL;
+#else
     sp<AudioInputDescriptor> inputDesc = NULL;
     for (size_t i = 0; i < size(); i++) {
         inputDesc = valueAt(i);
@@ -321,6 +331,7 @@ sp<AudioInputDescriptor> AudioInputCollection::getInputFromId(audio_port_handle_
         }
     }
     return inputDesc;
+#endif
 }
 
 uint32_t AudioInputCollection::activeInputsCountOnDevices(audio_devices_t devices) const

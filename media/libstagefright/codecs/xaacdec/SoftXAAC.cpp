@@ -689,6 +689,7 @@ void SoftXAAC::onQueueFilled(OMX_U32 /* portIndex */) {
                     notify(OMX_EventError, OMX_ErrorUndefined, err_code, NULL);
                     return;
                 }
+                mIsCodecConfigFlushRequired = true;
             }
 
             if (!mSampFreq || !mNumChannels) {
@@ -712,14 +713,10 @@ void SoftXAAC::onQueueFilled(OMX_U32 /* portIndex */) {
             signed int bytesConsumed = 0;
             int errorCode = 0;
             if (mIsCodecInitialized) {
-                mIsCodecConfigFlushRequired = true;
                 errorCode =
                     decodeXAACStream(inBuffer, inBufferLength, &bytesConsumed, &numOutBytes);
-            } else if (!mIsCodecConfigFlushRequired) {
+            } else {
                 ALOGW("Assumption that first frame after header initializes decoder failed!");
-                mSignalledError = true;
-                notify(OMX_EventError, OMX_ErrorUndefined, -1, NULL);
-                return;
             }
             inHeader->nFilledLen -= bytesConsumed;
             inHeader->nOffset += bytesConsumed;

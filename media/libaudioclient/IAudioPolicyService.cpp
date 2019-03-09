@@ -82,7 +82,15 @@ enum {
     GET_MASTER_MONO,
     GET_STREAM_VOLUME_DB,
     GET_SURROUND_FORMATS,
-    SET_SURROUND_FORMAT_ENABLED
+    SET_SURROUND_FORMAT_ENABLED,
+#if defined(MTK_AUDIO)
+    SET_POLICYMANAGER_PARAMETERS,
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+    START_OUTPUT_SAMPLERATE,
+    STOP_OUTPUT_SAMPLERATE,
+#endif
+#endif
+
 };
 
 #define MAX_ITEMS_PER_LIST 1024
@@ -524,6 +532,67 @@ public:
         return status;
     }
 
+//<MTK_AUDIO_ADD
+#if defined(MTK_AUDIO)
+    virtual status_t setPolicyManagerParameters(int par1, int par2, int par3, int par4)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IAudioPolicyService::getInterfaceDescriptor());
+        data.writeInt32(par1);
+        data.writeInt32(par2);
+        data.writeInt32(par3);
+        data.writeInt32(par4);
+        remote()->transact(SET_POLICYMANAGER_PARAMETERS, data, &reply);
+        return static_cast <status_t> (reply.readInt32());
+    }
+#else
+    virtual status_t setPolicyManagerParameters(int par1 __unused, int par2 __unused, int par3 __unused, int par4 __unused)
+    {
+        return 0;
+    }
+#endif
+#if defined(MTK_HIFIAUDIO_SUPPORT) && defined(MTK_AUDIO)
+    virtual status_t startOutputSamplerate(audio_io_handle_t output,
+                                 audio_stream_type_t stream,
+                                 audio_session_t session ,int samplerate)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IAudioPolicyService::getInterfaceDescriptor());
+        data.writeInt32(output);
+        data.writeInt32((int32_t)stream);
+        data.writeInt32((int32_t)session);
+        data.writeInt32(samplerate);
+        remote()->transact(START_OUTPUT_SAMPLERATE, data, &reply);
+        return static_cast <status_t> (reply.readInt32());
+    }
+    virtual status_t stopOutputSamplerate(audio_io_handle_t output,
+                                 audio_stream_type_t stream,
+                                 audio_session_t session ,int samplerate)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IAudioPolicyService::getInterfaceDescriptor());
+        data.writeInt32(output);
+        data.writeInt32((int32_t)stream);
+        data.writeInt32((int32_t)session);
+        data.writeInt32(samplerate);
+        remote()->transact(STOP_OUTPUT_SAMPLERATE, data, &reply);
+        return static_cast <status_t> (reply.readInt32());
+    }
+#else
+       virtual status_t startOutputSamplerate(audio_io_handle_t output __unused,
+                                 audio_stream_type_t stream __unused,
+                                 audio_session_t session __unused, int samplerate __unused)
+    {
+        return 0;
+    }
+    virtual status_t stopOutputSamplerate(audio_io_handle_t output __unused,
+                                 audio_stream_type_t stream __unused,
+                                 audio_session_t session __unused, int samplerate __unused)
+    {
+        return 0;
+    }
+#endif
+//MTK_AUDIO_ADD>
     virtual bool isOffloadSupported(const audio_offload_info_t& info)
     {
         Parcel data, reply;
@@ -948,9 +1017,9 @@ status_t BnAudioPolicyService::onTransact(
             break;
     }
 
-    char timeCheckString[64];
-    snprintf(timeCheckString, sizeof(timeCheckString), "IAudioPolicyService: %d", code);
-    TimeCheck check(timeCheckString);
+#if !defined(CONFIG_MT_ENG_BUILD) && !defined(CONFIG_MT_USERDEBUG_BUILD)
+    TimeCheck check("IAudioPolicyService");
+#endif
 
     switch (code) {
         case SET_DEVICE_CONNECTION_STATE: {
@@ -1304,6 +1373,37 @@ status_t BnAudioPolicyService::onTransact(
             return status;
         }
 
+#if defined(MTK_AUDIO)
+        case SET_POLICYMANAGER_PARAMETERS: {
+            CHECK_INTERFACE(IAudioPolicyService, data, reply);
+            int par1 = data.readInt32();
+            int par2 = data.readInt32();
+            int par3 = data.readInt32();
+            int par4 = data.readInt32();
+            reply->writeInt32(setPolicyManagerParameters(par1, par2, par3, par4));
+            return NO_ERROR;
+        } break;
+#if defined(MTK_HIFIAUDIO_SUPPORT)
+        case START_OUTPUT_SAMPLERATE: {
+            CHECK_INTERFACE(IAudioPolicyService, data, reply);
+            int output =data.readInt32();
+            audio_stream_type_t stream =(audio_stream_type_t)data.readInt32();
+            audio_session_t session = (audio_session_t) data.readInt32();
+            int samplerate =data.readInt32();
+            reply->writeInt32(startOutputSamplerate(output,stream,session,samplerate));
+            return NO_ERROR;
+        }
+        case STOP_OUTPUT_SAMPLERATE: {
+            CHECK_INTERFACE(IAudioPolicyService, data, reply);
+            int output =data.readInt32();
+            audio_stream_type_t stream =(audio_stream_type_t)data.readInt32();
+            audio_session_t session = (audio_session_t) data.readInt32();
+            int samplerate =data.readInt32();
+            reply->writeInt32(stopOutputSamplerate(output,stream,session,samplerate));
+            return NO_ERROR;
+        }
+#endif
+#endif
         case IS_OFFLOAD_SUPPORTED: {
             CHECK_INTERFACE(IAudioPolicyService, data, reply);
             audio_offload_info_t info = {};

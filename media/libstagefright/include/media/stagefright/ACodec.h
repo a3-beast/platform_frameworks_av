@@ -97,8 +97,12 @@ struct ACodec : public AHierarchicalStateMachine, public CodecBase {
 
 protected:
     virtual ~ACodec();
+    virtual status_t setupAudioCodec(
+            status_t err, const char *mime, bool encoder, const sp<AMessage> &msg);
+    // add for support 24bit high resolution audio feature
+    virtual status_t setupAudioBitWidth(const sp<AMessage> &) { return OK; };
 
-private:
+//private:
     struct BaseState;
     struct UninitializedState;
     struct LoadedState;
@@ -542,7 +546,7 @@ private:
     void addKeyFormatChangesToRenderBufferNotification(sp<AMessage> &notify);
     void sendFormatChange();
 
-    status_t getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify);
+    virtual status_t getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify);
 
     void signalError(
             OMX_ERRORTYPE error = OMX_ErrorUndefined,
@@ -565,6 +569,19 @@ private:
     void forceStateTransition(int generation);
 
     DISALLOW_EVIL_CONSTRUCTORS(ACodec);
+
+private:
+//   mtkadd set AvSyncRefTime to omx +
+    int64_t mAnchorTimeRealUs;
+//   mtkadd set AvSyncRefTime to omx -
+
+//MTK_VILTE_SUPPORT++
+    sp<AMessage> mAVPFNotify;
+    bool mIsViLTE;
+    status_t setViLTEParameters(const sp<AMessage> &msg, bool fgCheckResolutionChange);
+    status_t ResolutionChange(int32_t width, int32_t height);
+    bool signalViLTEError(OMX_ERRORTYPE error, status_t internalError);
+    //MTK_VILTE_SUPPORT--
 };
 
 }  // namespace android

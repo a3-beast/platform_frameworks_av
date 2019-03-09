@@ -45,6 +45,8 @@
 #include <media/AudioParameter.h>
 #include <system/audio.h>
 
+#include <media/stagefright/Utils_MTK.h>
+
 namespace android {
 
 static status_t copyNALUToABuffer(sp<ABuffer> *buffer, const uint8_t *ptr, size_t length) {
@@ -751,6 +753,8 @@ status_t convertMetaDataToMessage(
         if (meta->findInt32(kKeyPcmEncoding, &pcmEncoding)) {
             msg->setInt32("pcm-encoding", pcmEncoding);
         }
+
+        convertMeta_Audio(meta, msg);
     }
 
     int32_t maxInputSize;
@@ -880,7 +884,7 @@ status_t convertMetaDataToMessage(
     } else if (meta->findData(kKeyHVCC, &type, &data, &size)) {
         const uint8_t *ptr = (const uint8_t *)data;
 
-        if (size < 23 || ptr[0] != 1) {  // configurationVersion == 1
+        if (size < 23) {  // configurationVersion == 1, mtk version is 0
             ALOGE("b/23680780");
             return BAD_VALUE;
         }
@@ -1073,6 +1077,24 @@ status_t convertMetaDataToMessage(
         buffer->meta()->setInt32("csd", true);
         buffer->meta()->setInt64("timeUs", 0);
         msg->setBuffer("csd-0", buffer);
+    } else if (meta->findData(kKeyCodecConfigInfo, &type, &data, &size)) {
+        //mtkadd+ for avi aac csd setting
+        sp<ABuffer> buffer = new ABuffer(size);
+        memcpy(buffer->data(), data, size);
+
+        buffer->meta()->setInt32("csd", true);
+        buffer->meta()->setInt64("timeUs", 0);
+
+        msg->setBuffer("csd-0", buffer);
+    } else if (meta->findData(kKeyWMAC, &type, &data, &size)) {
+        //mtkadd+ for avi wma csd setting
+        sp<ABuffer> buffer = new ABuffer(size);
+        memcpy(buffer->data(), data, size);
+
+        buffer->meta()->setInt32("csd", true);
+        buffer->meta()->setInt64("timeUs", 0);
+
+        msg->setBuffer("csd-0", buffer);
     } else if (meta->findData(kKeyVp9CodecPrivate, &type, &data, &size)) {
         sp<ABuffer> buffer = new (std::nothrow) ABuffer(size);
         if (buffer.get() == NULL || buffer->base() == NULL) {
@@ -1086,6 +1108,17 @@ status_t convertMetaDataToMessage(
 
         parseVp9ProfileLevelFromCsd(buffer, msg);
     }
+#ifdef MTK_AUDIO_ALAC_SUPPORT
+    else if (meta->findData(kKeyALACC, &type, &data, &size)) {
+        sp<ABuffer> buffer = new ABuffer(size);
+        memcpy(buffer->data(), data, size);
+
+        buffer->meta()->setInt32("csd", true);
+        buffer->meta()->setInt64("timeUs", 0);
+
+        msg->setBuffer("csd-0", buffer);
+    }
+#endif
 
     // TODO expose "crypto-key"/kKeyCryptoKey through public api
     if (meta->findData(kKeyCryptoKey, &type, &data, &size)) {

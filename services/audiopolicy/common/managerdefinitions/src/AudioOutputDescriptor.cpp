@@ -16,6 +16,9 @@
 
 #define LOG_TAG "APM::AudioOutputDescriptor"
 //#define LOG_NDEBUG 0
+#if defined(MTK_AUDIO_DEBUG)
+#define LOG_NDEBUG 0
+#endif
 
 #include <AudioPolicyInterface.h>
 #include "AudioOutputDescriptor.h"
@@ -26,6 +29,14 @@
 #include <media/AudioParameter.h>
 #include <media/AudioPolicy.h>
 
+#if defined(MTK_AUDIO_DEBUG)
+#if defined(CONFIG_MT_ENG_BUILD)
+static int log_enable = 1;
+#else
+static int log_enable = __android_log_is_loggable(ANDROID_LOG_DEBUG, LOG_TAG, ANDROID_LOG_INFO);
+#endif
+#endif
+
 // A device mask for all audio output devices that are considered "remote" when evaluating
 // active output devices in isStreamActiveRemotely()
 #define APM_AUDIO_OUT_DEVICE_REMOTE_ALL  AUDIO_DEVICE_OUT_REMOTE_SUBMIX
@@ -35,7 +46,7 @@ namespace android {
 AudioOutputDescriptor::AudioOutputDescriptor(const sp<AudioPort>& port,
                                              AudioPolicyClientInterface *clientInterface)
     : mPort(port), mDevice(AUDIO_DEVICE_NONE),
-      mClientInterface(clientInterface), mPatchHandle(AUDIO_PATCH_HANDLE_NONE), mId(0)
+      mClientInterface(clientInterface), mOutputFirstActive(false), mPatchHandle(AUDIO_PATCH_HANDLE_NONE), mId(0)
 {
     // clear usage count for all stream types
     for (int i = 0; i < AUDIO_STREAM_CNT; i++) {
@@ -151,7 +162,11 @@ bool AudioOutputDescriptor::setVolume(float volume,
     // - the float value returned by computeVolume() changed
     // - the force flag is set
     if (volume != mCurVolume[stream] || force) {
+#if defined(MTK_AUDIO_DEBUG)
+        (void)(delayMs);
+#else
         ALOGV("setVolume() for stream %d, volume %f, delay %d", stream, volume, delayMs);
+#endif
         mCurVolume[stream] = volume;
         return true;
     }
@@ -371,6 +386,13 @@ bool SwAudioOutputDescriptor::setVolume(float volume,
                                         bool force)
 {
     bool changed = AudioOutputDescriptor::setVolume(volume, stream, device, delayMs, force);
+
+#if defined(MTK_AUDIO_DEBUG)
+    if (log_enable && (changed || mRefCount[stream] || ((stream == AUDIO_STREAM_VOICE_CALL || stream == AUDIO_STREAM_BLUETOOTH_SCO)))) {
+        ALOGD("SwAudioOutputDescriptor::%s mIoHandle %d id %d change %d volume %f stream %d device 0x%x delayMs %d force %d", __FUNCTION__,
+            mIoHandle, getId(), changed, volume, stream, device, delayMs, force);
+    }
+#endif
 
     if (changed) {
         // Force VOICE_CALL to track BLUETOOTH_SCO stream volume when bluetooth audio is
@@ -681,6 +703,16 @@ sp<SwAudioOutputDescriptor> SwAudioOutputCollection::getPrimaryOutput() const
 
 sp<SwAudioOutputDescriptor> SwAudioOutputCollection::getOutputFromId(audio_port_handle_t id) const
 {
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+    sp<SwAudioOutputDescriptor> outputDesc = NULL;
+    for (size_t i = 0; i < size(); i++) {
+        outputDesc = valueAt(i);
+        if (outputDesc->getId() == id) {
+            return outputDesc;
+        }
+    }
+    return NULL;
+#else
     sp<SwAudioOutputDescriptor> outputDesc = NULL;
     for (size_t i = 0; i < size(); i++) {
         outputDesc = valueAt(i);
@@ -689,6 +721,7 @@ sp<SwAudioOutputDescriptor> SwAudioOutputCollection::getOutputFromId(audio_port_
         }
     }
     return outputDesc;
+#endif
 }
 
 bool SwAudioOutputCollection::isAnyOutputActive(audio_stream_type_t streamToIgnore) const
@@ -774,6 +807,19 @@ status_t HwAudioOutputCollection::dump(int fd) const
     }
 
     return NO_ERROR;
+}
+
+audio_io_handle_t SwAudioOutputCollection::getUsbOutput() const
+{
+#if defined(MTK_USB_PHONECALL)
+    for (size_t i = 0; i < size(); i++) {
+        sp<SwAudioOutputDescriptor> outputDesc = valueAt(i);
+        if (!outputDesc->isDuplicated() && (outputDesc->device() & (AUDIO_DEVICE_OUT_USB_DEVICE|AUDIO_DEVICE_OUT_USB_HEADSET))) {
+            return this->keyAt(i);
+        }
+    }
+#endif
+    return 0;
 }
 
 }; //namespace android

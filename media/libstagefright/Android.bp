@@ -138,6 +138,11 @@ cc_library_shared {
         "Utils.cpp",
         "ThrottledSource.cpp",
         "VideoFrameScheduler.cpp",
+        "Acodec_vilte.cpp",
+    ],
+    
+    header_libs: [
+        "mtk_openmax_headers",
     ],
 
     shared_libs: [
@@ -224,6 +229,11 @@ cc_library_shared {
             cfi: true,
         },
     },
+
+    defaults: [
+        "mtk_libstagefright_defaults",
+        "mtk_libaed_defaults",
+    ],
 }
 
 cc_library {
@@ -308,6 +318,45 @@ cc_library {
             cfi: true,
         },
     },
+
+    defaults: [
+        "mtk_libstagefright_defaults",
+        "mtk_libaed_defaults",
+    ],
+}
+
+bootstrap_go_package {
+    name:"soong-libstagefright-mediatek",
+    pkgPath:"android/soong/libstagefright/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libstagefright.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libstagefright_defaults {
+    name: "mtk_libstagefright_defaults",
+    include_dirs: [
+        "frameworks/av/media/libavextensions"
+    ],
+    srcs: [
+        "mtkMp3Acodec/AcodecMtkMp3.cpp",
+        "Utils_MTK.cpp",
+    ],
+    header_libs: [
+        "mtk_openmax_headers",
+    ],
+    shared_libs: [
+        "libstagefright_omx_utils",
+        "android.hardware.media.omx@1.0",
+    ],
+    static_libs: [
+        "libavextensions",
+    ],
 }
 
 subdirs = [

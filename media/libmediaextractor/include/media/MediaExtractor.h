@@ -52,7 +52,9 @@ public:
     virtual MediaTrack *getTrack(size_t index) = 0;
 
     enum GetTrackMetaDataFlags {
-        kIncludeExtensiveMetaData = 1
+        kIncludeExtensiveMetaData = 1,
+        //mtkadd+
+        kIncludeMp3LowPowerInfo
     };
     virtual status_t getTrackMetaData(
             MetaDataBase& meta,

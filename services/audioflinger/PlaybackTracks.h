@@ -208,6 +208,16 @@ private:
     audio_output_flags_t mFlags;
     // If the last track change was notified to the client with readAndClearHasChanged
     std::atomic_flag     mChangeNotified = ATOMIC_FLAG_INIT;
+
+// <MTK_AUDIOMIXER_ENABLE_DRC
+public:
+    // reset DRC buffer
+    bool                mResetDrc;
+
+    audio_output_flags_t mFlagsOriginal;
+    bool        isOriginalFastTrack() const { return (mFlagsOriginal & AUDIO_OUTPUT_FLAG_FAST) != 0; }
+    bool    noRamp;
+// MTK_AUDIOMIXER_ENABLE_DRC>
 };  // end of Track
 
 

@@ -64,6 +64,8 @@ private:
     bool mBuffering;
     Mutex mBufferingLock;
     sp<ALooper> mLooper;
+    bool mGetSourceAvailable = false;
+
 
     void setError(status_t err);
     sp<AnotherPacketSource> getSource(bool audio);

@@ -100,6 +100,8 @@ void AMessage::freeItemValue(Item *item) {
         case kTypeString:
         {
             delete item->u.stringValue;
+            //mtkadd+
+            item->u.stringValue = NULL;
             break;
         }
 
@@ -161,7 +163,7 @@ inline size_t AMessage::findItemIndex(const char *name, size_t len) const {
 #ifdef DUMP_STATS
         ++memchecks;
 #endif
-        if (!memcmp(mItems[i].mName, name, len)) {
+        if (mItems[i].mName && !memcmp(mItems[i].mName, name, len)) {
             break;
         }
     }
@@ -198,7 +200,13 @@ AMessage::Item *AMessage::allocateItem(const char *name) {
         i = mNumItems++;
         item = &mItems[i];
         item->mType = kTypeInt32;
+        // mtkadd+, assign null value
+        item->mName = NULL;
+        // mtkadd-
         item->setName(name, len);
+        // mtkadd+
+        item->u.stringValue = NULL;
+        // mtkadd-
     }
 
     return item;
@@ -343,7 +351,8 @@ void AMessage::setRect(
 
 bool AMessage::findString(const char *name, AString *value) const {
     const Item *item = findItem(name, kTypeString);
-    if (item) {
+    //mtkadd + check stringValue to prevent AString construct using Null.
+    if (item && item->u.stringValue) {
         *value = *item->u.stringValue;
         return true;
     }

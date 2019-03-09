@@ -40,6 +40,15 @@ public:
     virtual status_t pause();
     virtual status_t setStopTimeUs(int64_t stopTimeUs);
 
+    //mtkadd for mp3 low power
+    virtual status_t setVendorMeta(const sp<MetaData> & meta) {
+         return mSource->setVendorMeta(meta);
+    }
+    //mtkadd for mp3 stop TOC
+    virtual status_t stopTocThreadIfTocEnabled() {
+         return mSource->stopTocThreadIfTocEnabled();
+    }
+
 private:
     sp<RemoteMediaExtractor> mExtractor;
     MediaTrack *mSource;

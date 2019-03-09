@@ -210,6 +210,8 @@ NuPlayer::NuPlayer(pid_t pid, const sp<MediaClock> &mediaClock)
       mDataSourceType(DATA_SOURCE_TYPE_NONE) {
     CHECK(mediaClock != NULL);
     clearFlushComplete();
+    //mtkadd+
+    init_ext();
 }
 
 NuPlayer::~NuPlayer() {
@@ -616,6 +618,14 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
         case kWhatPrepare:
         {
             ALOGV("onMessageReceived kWhatPrepare");
+
+            //mtkadd+ for mp3 lowpower
+            if(mIsWhitePlayback){
+                ALOGV("Turn on MTK music Enhancement = %d",mIsWhitePlayback);
+                sp<MetaData> meta = new MetaData;
+                meta->setInt32(kKeyMp3MultiRead,1);
+                mSource->setParams(meta);
+            }
 
             mSource->prepareAsync();
             break;
@@ -1118,17 +1128,26 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
                 setVideoScalingMode(mVideoScalingMode);
                 updateVideoSize(inputFormat, format);
             } else if (what == DecoderBase::kWhatShutdownCompleted) {
-                ALOGV("%s shutdown completed", audio ? "audio" : "video");
+                ALOGD("%s shutdown completed", audio ? "audio" : "video");
                 if (audio) {
-                    Mutex::Autolock autoLock(mDecoderLock);
-                    mAudioDecoder.clear();
+                    {
+                        Mutex::Autolock autoLock(mAudioDecoderLock);
+                        mAudioDecoder.clear();
+                    }
+
+                    //mtkadd,some time video eos early,mAudioDecoder set NULL late,
+                    //if above case,when receive Renderer::kWhatEOS ,player cannot
+                    //notify MEDIA_PLAYBACK_COMPLETE,then cannot exit
+                    if(mVideoEOS){
+                       notifyListener(MEDIA_PLAYBACK_COMPLETE, 0, 0);
+                    }
+
                     mAudioDecoderError = false;
                     ++mAudioDecoderGeneration;
 
                     CHECK_EQ((int)mFlushingAudio, (int)SHUTTING_DOWN_DECODER);
                     mFlushingAudio = SHUT_DOWN;
                 } else {
-                    Mutex::Autolock autoLock(mDecoderLock);
                     mVideoDecoder.clear();
                     mVideoDecoderError = false;
                     ++mVideoDecoderGeneration;
@@ -1301,7 +1320,8 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
                 }
 
                 restartAudio(
-                        positionUs, reason == Renderer::kForceNonOffload /* forceNonOffload */,
+                        positionUs, (reason == Renderer::kForceNonOffload) ||
+                        (reason == Renderer::kDueToError) /* forceNonOffload, mtk modify: add kDueToError*/,
                         reason != Renderer::kDueToTimeout /* needsToCreateAudioDecoder */);
             }
             break;
@@ -1446,6 +1466,29 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
             in.writeFloat(playbackRate);
 
             notifyListener(MEDIA_TIME_DISCONTINUITY, 0, 0, &in);
+            break;
+        }
+
+        case kWhatGetStats:
+        {
+            ALOGV("kWhatGetStats");
+
+            Vector<sp<AMessage>> *trackStats;
+            CHECK(msg->findPointer("trackstats", (void**)&trackStats));
+
+            trackStats->clear();
+            if (mVideoDecoder != NULL) {
+                trackStats->push_back(mVideoDecoder->getStats());
+            }
+            if (mAudioDecoder != NULL) {
+                trackStats->push_back(mAudioDecoder->getStats());
+            }
+
+            // respond for synchronization
+            sp<AMessage> response = new AMessage;
+            sp<AReplyToken> replyID;
+            CHECK(msg->senderAwaitsResponse(&replyID));
+            response->postReply(replyID);
             break;
         }
 
@@ -1796,7 +1839,6 @@ void NuPlayer::restartAudio(
           (long long)currentPositionUs, forceNonOffload, needsToCreateAudioDecoder);
     if (mAudioDecoder != NULL) {
         mAudioDecoder->pause();
-        Mutex::Autolock autoLock(mDecoderLock);
         mAudioDecoder.clear();
         mAudioDecoderError = false;
         ++mAudioDecoderGeneration;
@@ -1914,8 +1956,6 @@ status_t NuPlayer::instantiateDecoder(
             format->setFloat("operating-rate", rate * mPlaybackSettings.mSpeed);
         }
     }
-
-    Mutex::Autolock autoLock(mDecoderLock);
 
     if (audio) {
         sp<AMessage> notify = new AMessage(kWhatAudioNotify, this);
@@ -2218,15 +2258,13 @@ status_t NuPlayer::getCurrentPosition(int64_t *mediaUs) {
 void NuPlayer::getStats(Vector<sp<AMessage> > *trackStats) {
     CHECK(trackStats != NULL);
 
-    trackStats->clear();
+    ALOGV("NuPlayer::getStats()");
+    sp<AMessage> msg = new AMessage(kWhatGetStats, this);
+    msg->setPointer("trackstats", trackStats);
 
-    Mutex::Autolock autoLock(mDecoderLock);
-    if (mVideoDecoder != NULL) {
-        trackStats->push_back(mVideoDecoder->getStats());
-    }
-    if (mAudioDecoder != NULL) {
-        trackStats->push_back(mAudioDecoder->getStats());
-    }
+    sp<AMessage> response;
+    (void) msg->postAndAwaitResponse(&response);
+    // response is for synchronization, ignore contents
 }
 
 sp<MetaData> NuPlayer::getFileMeta() {
@@ -3014,5 +3052,24 @@ void NuPlayer::Source::notifyInstantiateSecureDecoders(const sp<AMessage> &reply
 void NuPlayer::Source::onMessageReceived(const sp<AMessage> & /* msg */) {
     TRESPASS();
 }
+
+//mtkadd+
+void NuPlayer::setIsWhitePlayback(bool setting) {
+    ALOGI("Is Mtk playback:%d", setting);
+    mIsWhitePlayback = setting;
+}
+
+void NuPlayer::init_ext(){
+    mIsWhitePlayback = false;
+}
+
+#ifdef MTK_DRM_APP
+void NuPlayer::setDRMClientInfo(const Parcel *request) {
+    if ((mDataSourceType == DATA_SOURCE_TYPE_GENERIC_FD
+        || mDataSourceType == DATA_SOURCE_TYPE_GENERIC_URL) && mSource != NULL) {
+        (static_cast<GenericSource *>(mSource.get()))->setDRMClientInfo(request);
+    }
+}
+#endif
 
 }  // namespace android

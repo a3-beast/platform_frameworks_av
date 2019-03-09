@@ -31,6 +31,7 @@
 
 namespace android {
 
+struct IHDCP;
 class IMediaCodecList;
 struct IMediaHTTPService;
 class IMediaRecorder;
@@ -48,6 +49,7 @@ public:
     virtual sp<IMediaMetadataRetriever> createMetadataRetriever() = 0;
     virtual sp<IMediaPlayer> create(const sp<IMediaPlayerClient>& client,
             audio_session_t audioSessionId = AUDIO_SESSION_ALLOCATE) = 0;
+    virtual sp<IHDCP>           makeHDCP(bool createEncryptionModule) = 0;
     virtual sp<IMediaCodecList> getCodecList() const = 0;
 
     // Connects to a remote display.
@@ -59,6 +61,11 @@ public:
     // provided interface at a time.
     virtual sp<IRemoteDisplay> listenForRemoteDisplay(const String16 &opPackageName,
             const sp<IRemoteDisplayClient>& client, const String8& iface) = 0;
+
+/// M: MTK WFD feature {@
+    virtual status_t enableRemoteDisplay(const char *iface) = 0;
+    virtual status_t enableRemoteDisplay(const char *iface, const uint32_t wfdFlags) = 0;
+/// @}
 
     // codecs and audio devices usage tracking for the battery app
     enum BatteryDataBits {

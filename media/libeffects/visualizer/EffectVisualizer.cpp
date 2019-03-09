@@ -387,7 +387,17 @@ int Visualizer_process(
             captIdx = 0;
         }
         int32_t smp = inBuffer->s16[2 * inIdx] + inBuffer->s16[2 * inIdx + 1];
+
+#if defined(MTK_AUDIOMIXER_ENABLE_DRC)
+        int32_t temp = smp;
         smp = smp >> shift;
+        if (0 == smp && 0 != temp)
+            smp = 1;
+//      smp = 1;  // forced pass gapless test
+#else
+        smp = smp >> shift;
+#endif
+
         buf[captIdx] = ((uint8_t)smp)^0x80;
     }
 

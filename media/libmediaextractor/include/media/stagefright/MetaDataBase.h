@@ -311,4 +311,6 @@ private:
 
 }  // namespace android
 
+#include "MetaDataBase_MTK.h"
+
 #endif  // META_DATA_H_

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,6 +136,18 @@ private:
     sp<ABuffer> dequeueScrambledAccessUnit();
 
     DISALLOW_EVIL_CONSTRUCTORS(ElementaryStreamQueue);
+
+// #ifdef MTK_SEEK_AND_DURATION
+public:
+    void setSeeking();  // add for mtk seek method
+
+private:
+    bool foundIFrameAtMPEGVideo(const uint8_t *data, int *lastGOPOff, size_t *offset, size_t *size);
+    void discardBufferWhenSeek(size_t *offset);
+    bool foundIFrameAtMPEG4Video(const uint8_t *data, bool *discard);
+
+    bool mSeeking;  // add for mtk seek method
+// #endif
 };
 
 }  // namespace android

@@ -60,6 +60,7 @@
 #include <mediautils/BatteryNotifier.h>
 #include <private/android_filesystem_config.h>
 #include <utils/Singleton.h>
+#include <stagefright/AVStageExtensions.h>
 
 namespace android {
 
@@ -860,20 +861,12 @@ static CodecBase *CreateCCodec() {
 }
 
 //static
-sp<CodecBase> MediaCodec::GetCodecBase(const AString &name, const char *owner) {
-    if (owner) {
-        if (strncmp(owner, "default", 8) == 0) {
-            return new ACodec;
-        } else if (strncmp(owner, "codec2", 7) == 0) {
-            return CreateCCodec();
-        }
-    }
-
+sp<CodecBase> MediaCodec::GetCodecBase(const AString &name) {
     if (name.startsWithIgnoreCase("c2.")) {
         return CreateCCodec();
     } else if (name.startsWithIgnoreCase("omx.")) {
         // at this time only ACodec specifies a mime type.
-        return new ACodec;
+        return AVStageFactory::get()->createACodec();
     } else if (name.startsWithIgnoreCase("android.filter.")) {
         return new MediaFilter;
     } else {
@@ -891,6 +884,11 @@ status_t MediaCodec::init(const AString &name) {
     // quickly, violating the OpenMAX specs, until that is remedied
     // we need to invest in an extra looper to free the main event
     // queue.
+
+    mCodec = GetCodecBase(name);
+    if (mCodec == NULL) {
+        return NAME_NOT_FOUND;
+    }
 
     mCodecInfo.clear();
 
@@ -922,11 +920,6 @@ status_t MediaCodec::init(const AString &name) {
         break;
     }
     if (mCodecInfo == nullptr) {
-        return NAME_NOT_FOUND;
-    }
-
-    mCodec = GetCodecBase(name, mCodecInfo->getOwnerName());
-    if (mCodec == NULL) {
         return NAME_NOT_FOUND;
     }
 
@@ -1943,9 +1936,7 @@ void MediaCodec::onMessageReceived(const sp<AMessage> &msg) {
                         mAnalyticsItem->setCString(kCodecCodec, mComponentName.c_str());
                     }
 
-                    const char *owner = mCodecInfo->getOwnerName();
-                    if (mComponentName.startsWith("OMX.google.")
-                            && (owner == nullptr || strncmp(owner, "default", 8) == 0)) {
+                    if (mComponentName.startsWith("OMX.google.")) {
                         mFlags |= kFlagUsesSoftwareRenderer;
                     } else {
                         mFlags &= ~kFlagUsesSoftwareRenderer;
@@ -2448,6 +2439,11 @@ void MediaCodec::onMessageReceived(const sp<AMessage> &msg) {
 
             extractCSD(format);
 
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+            if (flags & CONFIGURE_FLAG_ENABLE_THUMBNAIL_OPTIMIZATION) {
+                format->setInt32("enableThumbnailOptimzation", 1);
+            }
+#endif
             mCodec->initiateConfigureComponent(format);
             break;
         }

@@ -56,5 +56,28 @@ private:
 
     DISALLOW_EVIL_CONSTRUCTORS(ParsedMessage);
 };
+///M: Add by MTK03594 @{
+#define WFD_TESTMODE            "wlan.mircast.mode"
+#define WFD_TESTMODE_TRUE       "true"
+#define WFD_TESTMODE_PORT       20002
+#define WFD_MAX_BUFFER_SIZE     1024
+#define WFD_UIBC_SERVER_PORT    19283
 
+
+#define WFD_AUDIO_CODECS            "wfd_audio_codecs"
+#define WFD_VIDEO_FORMATS           "wfd_video_formats"
+#define WFD_COUPLE_SINK             "wfd_coupled_sink"
+#define WFD_TRIGGER_METHOD          "wfd_trigger_method"
+#define WFD_PRESENTATION_URL        "wfd_presentation_URL"
+#define WFD_CLIENT_RTP_PORTS        "wfd_client_rtp_ports"
+#define WFD_STANDBY                 "wfd_standby"
+#define WFD_IDR_REQUEST             "wfd_idr_request"
+#define WFD_UIBC_CAPABILITY         "wfd_uibc_capability"
+#define WFD_UIBC_SETTING            "wfd_uibc_setting"
+
+#define PLAY_STATE_REASON           "in-play-state"
+#define PAUSE_STATE_REASON          "in-pause-state"
+
+
+/// @}
 }  // namespace android

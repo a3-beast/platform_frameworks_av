@@ -62,6 +62,57 @@ LOCAL_STATIC_LIBRARIES := \
     libcpustats \
 
 LOCAL_MULTILIB := $(AUDIOSERVER_MULTILIB)
+# <MTK
+ifdef MTK_PATH_SOURCE
+LOCAL_C_INCLUDES += \
+    $(MTK_PATH_COMMON)/cgen/inc \
+    $(MTK_PATH_COMMON)/cgen/cfgfileinc \
+    $(MTK_PATH_COMMON)/cgen/cfgdefault \
+    $(MTK_PATH_SOURCE)/external/bessound_HD \
+    $(MTK_PATH_SOURCE)/external/AudioCompensationFilter \
+    $(MTK_PATH_SOURCE)/external/AudioComponentEngine
+endif
+
+ifeq ($(MTK_AUDIO),yes)
+    LOCAL_CFLAGS += -DMTK_AUDIO
+    LOCAL_CFLAGS += -DMTK_AUDIO_DEBUG
+    LOCAL_CFLAGS += -DMTK_LOW_LATENCY
+    LOCAL_CFLAGS += -DMTK_LOW_POWER
+    LOCAL_CFLAGS += -DMTK_AUDIO_FIX_DEFAULT_DEFECT
+ifeq ($(strip $(TARGET_BUILD_VARIANT)),eng)
+    LOCAL_CFLAGS += -DCONFIG_MT_ENG_BUILD
+endif
+ifeq ($(strip $(MTK_AUDIO_TUNNELING_SUPPORT)),yes)
+        LOCAL_CFLAGS += -DMTK_AUDIO_TUNNELING_SUPPORT
+endif
+ifeq ($(MTK_HIFIAUDIO_SUPPORT),yes)
+    LOCAL_CFLAGS += -DMTK_HIFIAUDIO_SUPPORT
+endif
+
+ifneq ($(filter $(TARGET_BUILD_VARIANT),eng userdebug),)
+    LOCAL_CFLAGS += -DMTK_LATENCY_DETECT_PULSE
+    LOCAL_SHARED_LIBRARIES += libmtkaudio_utils
+    LOCAL_C_INCLUDES += $(TOPDIR)vendor/mediatek/proprietary/external/audio_utils
+endif
+
+ifeq ($(strip $(MTK_BESLOUDNESS_SUPPORT)),yes)
+    ifneq ($(strip $(MTK_BESLOUDNESS_RUN_WITH_HAL)),yes)
+       LOCAL_SHARED_LIBRARIES += \
+           libaudiocompensationfilter \
+           libaudiocomponentengine
+
+       LOCAL_CFLAGS += -DMTK_AUDIOMIXER_ENABLE_DRC
+    endif
+endif
+
+endif
+# MTK>
+
+# <MTK
+ifeq ($(MTK_AUDIO),yes)
+    LOCAL_CFLAGS += -DMTK_AUDIO_FIX_DEFAULT_DEFECT
+endif
+# MTK>
 
 LOCAL_MODULE:= libaudioflinger
 

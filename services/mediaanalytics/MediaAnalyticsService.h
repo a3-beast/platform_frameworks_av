@@ -60,6 +60,9 @@ class MediaAnalyticsService : public BnMediaAnalyticsService
     mutable Mutex           mLock_ids;
     mutable Mutex           mLock_mappings;
 
+    //mtkadd+
+    mutable Mutex           mBigLock;
+
     // limit how many records we'll retain
     // by count (in each queue (open, finalized))
     int32_t mMaxRecords;

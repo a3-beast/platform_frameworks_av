@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +73,9 @@ struct ATSParser : public RefBase {
         TS_TIMESTAMPS_ARE_ABSOLUTE = 1,
         // Video PES packets contain exactly one (aligned) access unit.
         ALIGNED_VIDEO_DATA         = 2,
+// #ifdef MTK_SEEK_AND_DURATION
+        TS_SOURCE_IS_LOCAL = 0x40000000,
+// #endif
     };
 
     enum SourceType {
@@ -226,6 +234,18 @@ private:
     size_t mNumPCRs;
 
     DISALLOW_EVIL_CONSTRUCTORS(ATSParser);
+
+// #ifdef MTK_SEEK_AND_DURATION
+public:
+    // add for mtk duration calculate method and local seek
+    int64_t getMaxPTS();
+    bool getDequeueState();
+    void setDequeueState(bool needDequeuePES);
+
+private:
+    // add for mtk duration calculate method and local seek
+    bool mNeedDequeuePES;
+// #endif
 };
 
 }  // namespace android

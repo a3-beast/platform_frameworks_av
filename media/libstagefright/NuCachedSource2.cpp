@@ -213,6 +213,8 @@ NuCachedSource2::NuCachedSource2(
         // Makes no sense to disconnect and do keep-alives...
         mKeepAliveIntervalUs = 0;
     }
+    ALOGI("NuCachedSource2: lowwater %zu bytes, highwater %zu bytes, keepalive %lld us",
+         mLowwaterThresholdBytes, mHighwaterThresholdBytes, (long long)mKeepAliveIntervalUs);
 
     mLooper->setName("NuCachedSource2");
     mLooper->registerHandler(mReflector);
@@ -229,6 +231,7 @@ NuCachedSource2::NuCachedSource2(
 }
 
 NuCachedSource2::~NuCachedSource2() {
+    ALOGI("~NuCachedSource2");
     mLooper->stop();
     mLooper->unregisterHandler(mReflector->id());
 
@@ -257,8 +260,9 @@ status_t NuCachedSource2::getEstimatedBandwidthKbps(int32_t *kbps) {
 }
 
 void NuCachedSource2::disconnect() {
+    ALOGI("disconnect(): mSource %d", (mSource != NULL));
     if (mSource->flags() & kIsHTTPBasedSource) {
-        ALOGV("disconnecting HTTPBasedSource");
+        ALOGD("disconnecting HTTPBasedSource");
 
         {
             Mutex::Autolock autoLock(mLock);
@@ -319,7 +323,8 @@ void NuCachedSource2::onMessageReceived(const sp<AMessage> &msg) {
 }
 
 void NuCachedSource2::fetchInternal() {
-    ALOGV("fetchInternal");
+    ALOGI("fetchInternal: mCacheOffset %lld, mCache->totalSize %zu",
+            (long long)mCacheOffset, mCache->totalSize());
 
     bool reconnect = false;
 
@@ -335,6 +340,7 @@ void NuCachedSource2::fetchInternal() {
     }
 
     if (reconnect) {
+        ALOGI("reconnectAtOffset: %lld", (long long)(mCacheOffset + mCache->totalSize()));
         status_t err =
             mSource->reconnectAtOffset(mCacheOffset + mCache->totalSize());
 
@@ -365,7 +371,7 @@ void NuCachedSource2::fetchInternal() {
     Mutex::Autolock autoLock(mLock);
 
     if (n == 0 || mDisconnecting) {
-        ALOGI("caching reached eos.");
+        ALOGI("caching reached eos. (n %zd, mDisconnecting %d)", n, mDisconnecting);
 
         mNumRetriesLeft = 0;
         mFinalStatus = ERROR_END_OF_STREAM;
@@ -409,7 +415,8 @@ void NuCachedSource2::onFetch() {
 
     if (mFetching || keepAlive) {
         if (keepAlive) {
-            ALOGI("Keep alive");
+            ALOGI("Keep alive: mCacheOffset %llu, mCache->totalSize() %zu, mLastAccessPos %lld",
+                  (unsigned long long)mCacheOffset, mCache->totalSize(), (long long)mLastAccessPos);
         }
 
         fetchInternal();
@@ -422,7 +429,7 @@ void NuCachedSource2::onFetch() {
 
             if (mDisconnectAtHighwatermark
                     && (mSource->flags() & DataSource::kIsHTTPBasedSource)) {
-                ALOGV("Disconnecting at high watermark");
+                ALOGI("Disconnecting at high watermark");
                 static_cast<HTTPBase *>(mSource.get())->disconnect();
                 mFinalStatus = -EAGAIN;
             }
@@ -434,7 +441,9 @@ void NuCachedSource2::onFetch() {
 
     int64_t delayUs;
     if (mFetching) {
+        showBW();
         if (mFinalStatus != OK && mNumRetriesLeft > 0) {
+            ALOGI("retry left times %d", mNumRetriesLeft);
             // We failed this time and will try again in 3 seconds.
             delayUs = 3000000ll;
         } else {
@@ -493,6 +502,8 @@ void NuCachedSource2::restartPrefetcherIfNecessary_l(
                 >= mLowwaterThresholdBytes) {
         return;
     }
+    ALOGI("restartPrefetcherIfNecessary_l: mCache->totalSize() >= highwater %d",
+            mCache->totalSize() >= mHighwaterThresholdBytes);
 
     size_t maxBytes = mLastAccessPos - mCacheOffset;
 
@@ -518,7 +529,13 @@ ssize_t NuCachedSource2::readAt(off64_t offset, void *data, size_t size) {
 
     Mutex::Autolock autoLock(mLock);
     if (mDisconnecting) {
+        ALOGI("readAt return EOS when mDisconnecting = true");
         return ERROR_END_OF_STREAM;
+    }
+
+    if (offset < 0 || size > (size_t)mHighwaterThresholdBytes) {
+        ALOGW("Error: offset %lld, size %zu", (long long)offset, size);
+        return -EINVAL;
     }
 
     // If the request can be completely satisfied from the cache, do so.
@@ -658,7 +675,7 @@ status_t NuCachedSource2::seekInternal_l(off64_t offset) {
         return OK;
     }
 
-    ALOGI("new range: offset= %lld", (long long)offset);
+    ALOGI("new range: offset %lld", (long long)offset);
 
     mCacheOffset = offset;
 
@@ -769,4 +786,17 @@ void NuCachedSource2::RemoveCacheSpecificHeaders(
     }
 }
 
+void NuCachedSource2::showBW() {
+    static int64_t LastUpdateUs = 0;
+    int64_t nowUs = ALooper::GetNowUs();
+    if (nowUs - LastUpdateUs > 2000*1000ll) {
+        int32_t bps = 0;
+        if (mSource->flags() & kIsHTTPBasedSource) {
+            HTTPBase* source = static_cast<HTTPBase *>(mSource.get());
+            source->estimateBandwidth(&bps);
+        }
+        ALOGI("bandwidth = %d bytes/s", bps >> 3);
+        LastUpdateUs = nowUs;
+    }
+}
 }  // namespace android

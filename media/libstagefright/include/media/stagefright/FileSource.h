@@ -44,6 +44,7 @@ public:
     }
 
     virtual sp<DecryptHandle> DrmInitialization(const char *mime);
+    virtual void getDrmInfo(sp<DecryptHandle> &handle, DrmManagerClient **client);
 
     virtual String8 toString() {
         return mName;

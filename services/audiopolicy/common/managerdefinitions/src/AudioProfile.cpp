@@ -287,4 +287,19 @@ int AudioProfileVector::compareFormats(const sp<AudioProfile> *profile1,
     return AudioPort::compareFormats((*profile1)->getFormat(), (*profile2)->getFormat());
 }
 
+status_t AudioProfile::addChannelMask(audio_channel_mask_t mask)
+{
+#if defined(MTK_AUDIO)
+    if (mChannelMasks.indexOf(mask) < 0) {
+        mChannelMasks.add(mask);
+        return NO_ERROR;
+    } else {
+        return BAD_VALUE;
+    }
+#else
+    ALOGW("%s unsupport, mask 0x%x", __FUNCTION__, mask);
+    return INVALID_OPERATION;
+#endif
+}
+
 } // namespace android

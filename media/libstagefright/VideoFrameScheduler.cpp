@@ -62,6 +62,9 @@ static const nsecs_t kMaxAllowedFrameSkip = kNanosIn1s;     // 1 sec
 static const nsecs_t kMinPeriod = kNanosIn1s / 120;         // 120Hz
 static const nsecs_t kRefitRefreshPeriod = 10 * kNanosIn1s; // 10 sec
 
+// mtk add: error handle for div 0 or overflow
+int64_t kMaxInt64 = 9223372036854775807ll;  // the max value of int64_t: -2^63 ~ 2^63-1
+
 VideoFrameScheduler::PLL::PLL()
     : mPeriod(-1),
       mPhase(0),
@@ -153,6 +156,12 @@ bool VideoFrameScheduler::PLL::fit(
         //   priming, and possibly shifted by up to kRefitRefreshPeriod/kMinPeriod
         //   while we are not refitting.
         int64_t y = divRound(time - phase, period >> kPrecision);
+        //add for ALPS03569378,sumYY += y * y overflow
+        if(sumYY > kMaxInt64 - y * y || sumXX > kMaxInt64 - x * x
+            || (x * y > 0 && sumXY > kMaxInt64 - x * y) || (x * y < 0 && sumXY < -kMaxInt64 - x * y)){
+            ALOGE("%d line would overflow", __LINE__);
+            return false;
+        }
         sumX += x;
         sumY += y;
         sumXX += x * x;
@@ -160,9 +169,16 @@ bool VideoFrameScheduler::PLL::fit(
         sumYY += y * y;
         lastTime = time;
     }
+    if (((sumXX != 0) && ((int64_t)numSamplesToUse > kMaxInt64 / sumXX)) || ((sumX != 0) && (sumX > kMaxInt64 / sumX))
+        || ((sumXY != 0) && ((int64_t)numSamplesToUse > kMaxInt64 / sumXY)) || ((sumY != 0) && (sumX > kMaxInt64 / sumY))
+        || ((sumY != 0) && (sumXX > kMaxInt64 / sumY)) || ((sumXY != 0) && (sumX > kMaxInt64 / sumXY))) {
+        ALOGE("%d line would overflow", __LINE__);
+        return false;
+    }
 
     int64_t div   = (int64_t)numSamplesToUse * sumXX - sumX * sumX;
     if (div == 0) {
+        ALOGE("div == 0 and fit() return false");
         return false;
     }
 
@@ -170,6 +186,10 @@ bool VideoFrameScheduler::PLL::fit(
     int64_t b_nom = sumXX * sumY            - sumX * sumXY;
     *a = divRound(a_nom, div);
     *b = divRound(b_nom, div);
+    if (((sumXY != 0) && (a_nom > kMaxInt64 / sumXY)) || ((sumY != 0) && (b_nom > kMaxInt64 / sumY))) {
+        ALOGE("%d line would overflow", __LINE__);
+        return false;
+    }
     // don't use a and b directly as the rounding error is significant
     *err = sumYY - divRound(a_nom * sumXY + b_nom * sumY, div);
     ALOGV("fitting[%zu] a=%lld (%.6f), b=%lld (%.6f), err=%lld (%.6f)",
@@ -475,16 +495,7 @@ nsecs_t VideoFrameScheduler::schedule(nsecs_t renderTime) {
                 nextVsyncTime += mVsyncPeriod;
                 if (vsyncsForLastFrame < ULONG_MAX)
                     ++vsyncsForLastFrame;
-            } else if (mTimeCorrection < -correctionLimit * 2
-                    || mTimeCorrection > correctionLimit * 2) {
-                ALOGW("correction beyond limit: %lld vs %lld (vsyncs for last frame: %zu, min: %zu)"
-                        " restarting. render=%lld",
-                        (long long)mTimeCorrection, (long long)correctionLimit,
-                        vsyncsForLastFrame, minVsyncsPerFrame, (long long)origRenderTime);
-                restart();
-                return origRenderTime;
             }
-
             ATRACE_INT("FRAME_VSYNCS", vsyncsForLastFrame);
         }
         mLastVsyncTime = nextVsyncTime;

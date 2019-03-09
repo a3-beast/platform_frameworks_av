@@ -2143,14 +2143,8 @@ status_t Camera3Device::setConsumerSurfaces(int streamId,
 
         res = stream->finishConfiguration();
         if (res != OK) {
-            // If finishConfiguration fails due to abandoned surface, do not set
-            // device to error state.
-            bool isSurfaceAbandoned =
-                    (res == NO_INIT || res == DEAD_OBJECT) && stream->isAbandoned();
-            if (!isSurfaceAbandoned) {
-                SET_ERR_L("Can't finish configuring output stream %d: %s (%d)",
-                        stream->getId(), strerror(-res), res);
-            }
+            SET_ERR_L("Can't finish configuring output stream %d: %s (%d)",
+                   stream->getId(), strerror(-res), res);
             return res;
         }
     }
@@ -2367,16 +2361,9 @@ bool Camera3Device::reconfigureCamera(const CameraMetadata& sessionParams) {
             //present streams end up with outstanding buffers that will
             //not get drained.
             internalUpdateStatusLocked(STATUS_ACTIVE);
-        } else if (rc == DEAD_OBJECT) {
-            // DEAD_OBJECT can be returned if either the consumer surface is
-            // abandoned, or the HAL has died.
-            // - If the HAL has died, configureStreamsLocked call will set
-            // device to error state,
-            // - If surface is abandoned, we should not set device to error
-            // state.
-            ALOGE("Failed to re-configure camera due to abandoned surface");
         } else {
-            SET_ERR_L("Failed to re-configure camera: %d", rc);
+            setErrorStateLocked("%s: Failed to re-configure camera: %d",
+                    __FUNCTION__, rc);
         }
     } else {
         ALOGE("%s: Failed to pause streaming: %d", __FUNCTION__, rc);
@@ -2510,9 +2497,6 @@ status_t Camera3Device::configureStreamsLocked(int operatingMode,
             CLOGE("Can't finish configuring input stream %d: %s (%d)",
                     mInputStream->getId(), strerror(-res), res);
             cancelStreamsConfigurationLocked();
-            if ((res == NO_INIT || res == DEAD_OBJECT) && mInputStream->isAbandoned()) {
-                return DEAD_OBJECT;
-            }
             return BAD_VALUE;
         }
     }
@@ -2526,9 +2510,6 @@ status_t Camera3Device::configureStreamsLocked(int operatingMode,
                 CLOGE("Can't finish configuring output stream %d: %s (%d)",
                         outputStream->getId(), strerror(-res), res);
                 cancelStreamsConfigurationLocked();
-                if ((res == NO_INIT || res == DEAD_OBJECT) && outputStream->isAbandoned()) {
-                    return DEAD_OBJECT;
-                }
                 return BAD_VALUE;
             }
         }
@@ -4844,6 +4825,15 @@ status_t Camera3Device::RequestThread::prepareHalRequests() {
                 captureRequest->mOutputStreams.size());
         halRequest->output_buffers = outputBuffers->array();
         std::set<String8> requestedPhysicalCameras;
+
+        sp<Camera3Device> parent = mParent.promote();
+        if (parent == NULL) {
+            // Should not happen, and nowhere to send errors to, so just log it
+            CLOGE("RequestThread: Parent is gone");
+            return INVALID_OPERATION;
+        }
+        nsecs_t waitDuration = kBaseGetBufferWait + parent->getExpectedInFlightDuration();
+
         for (size_t j = 0; j < captureRequest->mOutputStreams.size(); j++) {
             sp<Camera3OutputStreamInterface> outputStream = captureRequest->mOutputStreams.editItemAt(j);
 
@@ -4864,6 +4854,7 @@ status_t Camera3Device::RequestThread::prepareHalRequests() {
             }
 
             res = outputStream->getBuffer(&outputBuffers->editItemAt(j),
+                    waitDuration,
                     captureRequest->mOutputSurfaces[j]);
             if (res != OK) {
                 // Can't get output buffer from gralloc queue - this could be due to
@@ -4890,13 +4881,6 @@ status_t Camera3Device::RequestThread::prepareHalRequests() {
         totalNumBuffers += halRequest->num_output_buffers;
 
         // Log request in the in-flight queue
-        sp<Camera3Device> parent = mParent.promote();
-        if (parent == NULL) {
-            // Should not happen, and nowhere to send errors to, so just log it
-            CLOGE("RequestThread: Parent is gone");
-            return INVALID_OPERATION;
-        }
-
         // If this request list is for constrained high speed recording (not
         // preview), and the current request is not the last one in the batch,
         // do not send callback to the app.

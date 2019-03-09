@@ -32,6 +32,14 @@
 #include <utils/String8.h>
 #include <utils/Log.h>
 
+#if defined(MTK_AUDIO_DEBUG)
+#if defined(CONFIG_MT_ENG_BUILD)
+static int log_enable = 1;
+#else
+static int log_enable = __android_log_is_loggable(ANDROID_LOG_DEBUG, LOG_TAG, ANDROID_LOG_INFO);
+#endif
+#endif
+
 namespace android
 {
 namespace audio_policy
@@ -84,9 +92,17 @@ status_t Engine::setPhoneState(audio_mode_t state)
         ALOGV("  Entering call in setPhoneState()");
         mApmObserver->getVolumeCurves().switchVolumeCurve(AUDIO_STREAM_VOICE_CALL,
                                                           AUDIO_STREAM_DTMF);
+#if defined(MTK_AUDIO)
+        AudioPolicyVendorControl &mAudioPolicyVendorControl = mApmObserver->getAudioPolicyVendorControl();
+        mAudioPolicyVendorControl.setVoiceReplaceDTMFStatus(true);
+#endif
     } else if (is_state_in_call(oldState) && !is_state_in_call(state)) {
         ALOGV("  Exiting call in setPhoneState()");
         mApmObserver->getVolumeCurves().restoreOriginVolumeCurve(AUDIO_STREAM_DTMF);
+#if defined(MTK_AUDIO)
+        AudioPolicyVendorControl &mAudioPolicyVendorControl = mApmObserver->getAudioPolicyVendorControl();
+        mAudioPolicyVendorControl.setVoiceReplaceDTMFStatus(false);
+#endif
     }
     return NO_ERROR;
 }
@@ -184,7 +200,9 @@ routing_strategy Engine::getStrategyForStream(audio_stream_type_t stream)
     case AUDIO_STREAM_DTMF:
         return STRATEGY_DTMF;
     default:
+#if !defined(MTK_AUDIO_DEBUG)
         ALOGE("unknown stream type %d", stream);
+#endif
     case AUDIO_STREAM_SYSTEM:
         // NOTE: SYSTEM stream uses MEDIA strategy because muting music and switching outputs
         // while key clicks are played produces a poor result
@@ -259,6 +277,9 @@ audio_devices_t Engine::getDeviceForStrategyInt(routing_strategy strategy,
     uint32_t device = AUDIO_DEVICE_NONE;
     uint32_t availableOutputDevicesType =
             availableOutputDevices.types() & ~outputDeviceTypesToIgnore;
+#if defined(MTK_USB_PHONECALL)
+    AudioPolicyVendorControl &mAudioPolicyVendorControl = mApmObserver->getAudioPolicyVendorControl();
+#endif
 
     switch (strategy) {
 
@@ -325,6 +346,10 @@ audio_devices_t Engine::getDeviceForStrategyInt(routing_strategy strategy,
 
             if (((availableInputDevices.types() &
                     AUDIO_DEVICE_IN_TELEPHONY_RX & ~AUDIO_DEVICE_BIT_IN) == 0) ||
+#if defined(MTK_AUDIO)
+                    //Device Telephone TX and RX should simultaneously exist, AUDIO_DEVICE_OUT_TELEPHONY_TX not using yet.
+                    ((availableOutputDevices.types() & AUDIO_DEVICE_OUT_TELEPHONY_TX ) == 0) ||
+#endif
                     (((txDevice & availPrimaryInputDevices & ~AUDIO_DEVICE_BIT_IN) != 0) &&
                          (primaryOutput->getAudioPort()->getModuleVersionMajor() < 3))) {
                 availableOutputDevicesType = availPrimaryOutputDevices;
@@ -363,6 +388,13 @@ audio_devices_t Engine::getDeviceForStrategyInt(routing_strategy strategy,
             if (device) break;
             device = availableOutputDevicesType & AUDIO_DEVICE_OUT_LINE;
             if (device) break;
+#if defined(MTK_USB_PHONECALL)
+            if (getPhoneState() == AUDIO_MODE_IN_CALL ||
+                (getPhoneState() == AUDIO_MODE_IN_COMMUNICATION && mAudioPolicyVendorControl.getUsbSuspended())) {
+                device = availableOutputDevicesType & AUDIO_DEVICE_OUT_BUS;
+                if (device) break;
+            }
+#endif
             device = availableOutputDevicesType & AUDIO_DEVICE_OUT_USB_HEADSET;
             if (device) break;
             device = availableOutputDevicesType & AUDIO_DEVICE_OUT_USB_DEVICE;
@@ -548,6 +580,12 @@ audio_devices_t Engine::getDeviceForStrategyInt(routing_strategy strategy,
         if (device2 == AUDIO_DEVICE_NONE) {
             device2 = availableOutputDevicesType & AUDIO_DEVICE_OUT_USB_ACCESSORY;
         }
+#if defined(MTK_USB_PHONECALL)
+        if (device2 == AUDIO_DEVICE_NONE && (getPhoneState() == AUDIO_MODE_IN_CALL ||
+            (getPhoneState() == AUDIO_MODE_IN_COMMUNICATION && mAudioPolicyVendorControl.getUsbSuspended()))) {
+            device2 = availableOutputDevicesType & AUDIO_DEVICE_OUT_BUS;
+        }
+#endif
         if (device2 == AUDIO_DEVICE_NONE) {
             device2 = availableOutputDevicesType & AUDIO_DEVICE_OUT_USB_DEVICE;
         }
@@ -606,7 +644,20 @@ audio_devices_t Engine::getDeviceForStrategyInt(routing_strategy strategy,
         ALOGE_IF(device == AUDIO_DEVICE_NONE,
                  "getDeviceForStrategy() no default device defined");
     }
+#if defined(MTK_AUDIO_DEBUG)
+#if defined(CONFIG_MT_ENG_BUILD)
+    routing_strategy printStrategy = STRATEGY_SONIFICATION_RESPECTFUL;
+#else
+    routing_strategy printStrategy = STRATEGY_PHONE;
+#endif
+    if (log_enable && strategy <= printStrategy) {
+        ALOGD("s %d avaDev 0x%x ba2dpo %d dev 0x%x sfu [0]:%d [1]:%d [4]:%d", strategy, availableOutputDevicesType,
+            outputs.getA2dpOutput(), device, mForceUse[AUDIO_POLICY_FORCE_FOR_COMMUNICATION], mForceUse[AUDIO_POLICY_FORCE_FOR_MEDIA],
+            mForceUse[AUDIO_POLICY_FORCE_FOR_SYSTEM]);
+    }
+#else
     ALOGVV("getDeviceForStrategy() strategy %d, device %x", strategy, device);
+#endif
     return device;
 }
 
@@ -617,6 +668,9 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
     const DeviceVector &availableInputDevices = mApmObserver->getAvailableInputDevices();
     const SwAudioOutputCollection &outputs = mApmObserver->getOutputs();
     audio_devices_t availableDeviceTypes = availableInputDevices.types() & ~AUDIO_DEVICE_BIT_IN;
+#if defined(MTK_USB_PHONECALL)
+    AudioPolicyVendorControl &mAudioPolicyVendorControl = mApmObserver->getAudioPolicyVendorControl();
+#endif
 
     uint32_t device = AUDIO_DEVICE_NONE;
 
@@ -654,6 +708,10 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
         device = AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET;
     } else if (availableDeviceTypes & AUDIO_DEVICE_IN_WIRED_HEADSET) {
         device = AUDIO_DEVICE_IN_WIRED_HEADSET;
+#if defined(MTK_USB_PHONECALL)
+    } else if ((availableDeviceTypes & AUDIO_DEVICE_IN_BUS) && mAudioPolicyVendorControl.getUsbSuspended()) {
+        device = AUDIO_DEVICE_IN_BUS;
+#endif
     } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_HEADSET) {
         device = AUDIO_DEVICE_IN_USB_HEADSET;
     } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_DEVICE) {
@@ -686,6 +744,11 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
         default:    // FORCE_NONE
             if (availableDeviceTypes & AUDIO_DEVICE_IN_WIRED_HEADSET) {
                 device = AUDIO_DEVICE_IN_WIRED_HEADSET;
+#if defined(MTK_USB_PHONECALL)
+            } else if ((availableDeviceTypes & AUDIO_DEVICE_IN_BUS) &&
+                            mAudioPolicyVendorControl.getUsbSuspended()) {
+                device = AUDIO_DEVICE_IN_BUS;
+#endif
             } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_HEADSET) {
                 device = AUDIO_DEVICE_IN_USB_HEADSET;
             } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_DEVICE) {
@@ -713,6 +776,11 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
             device = AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET;
         } else if (availableDeviceTypes & AUDIO_DEVICE_IN_WIRED_HEADSET) {
             device = AUDIO_DEVICE_IN_WIRED_HEADSET;
+#if defined(MTK_USB_PHONECALL)
+        } else if ((availableDeviceTypes & AUDIO_DEVICE_IN_BUS) &&
+                        mAudioPolicyVendorControl.getUsbSuspended()) {
+            device = AUDIO_DEVICE_IN_BUS;
+#endif
         } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_HEADSET) {
             device = AUDIO_DEVICE_IN_USB_HEADSET;
         } else if (availableDeviceTypes & AUDIO_DEVICE_IN_USB_DEVICE) {
@@ -745,6 +813,11 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
         }
         break;
     default:
+#if defined(MTK_AUDIO)
+        if (availableDeviceTypes & AUDIO_DEVICE_IN_BUILTIN_MIC) {
+            device = AUDIO_DEVICE_IN_BUILTIN_MIC;
+        }
+#endif
         ALOGW("getDeviceForInputSource() invalid input source %d", inputSource);
         break;
     }
@@ -756,7 +829,14 @@ audio_devices_t Engine::getDeviceForInputSource(audio_source_t inputSource) cons
         ALOGE_IF(device == AUDIO_DEVICE_NONE,
                  "getDeviceForInputSource() no default device defined");
     }
+#if defined(MTK_AUDIO_DEBUG)
+    if (log_enable) {
+        ALOGD("getDeviceForInputSource()input source %d, device %08x sfu [0]:%d [2]:%d", inputSource, device,
+            mForceUse[AUDIO_POLICY_FORCE_FOR_COMMUNICATION], mForceUse[AUDIO_POLICY_FORCE_FOR_RECORD]);
+    }
+#else
     ALOGV("getDeviceForInputSource()input source %d, device %08x", inputSource, device);
+#endif
     return device;
 }
 

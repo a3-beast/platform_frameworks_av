@@ -164,6 +164,8 @@ void NuPlayer::StreamingSource::onReadBuffer() {
             }
         }
     }
+    // resolve timing issue, Source maybe not cteated when getSource.
+    mGetSourceAvailable = true;
 }
 
 status_t NuPlayer::StreamingSource::postReadBuffer() {
@@ -231,6 +233,19 @@ sp<AnotherPacketSource> NuPlayer::StreamingSource::getSource(bool audio) {
 }
 
 sp<AMessage> NuPlayer::StreamingSource::getFormat(bool audio) {
+    // resolve timing issue, Source maybe not cteated when getSource.
+    int count = 0;
+    while (!mGetSourceAvailable && count <= 30) {
+        ALOGW("getSource not available, waiting");
+        usleep(10000);
+        count++;
+    }
+    if (count <= 30) {
+        ALOGD("getSource available");
+    } else {
+        ALOGE("getSource NOT available, return err!");
+        return NULL;
+    }
     sp<AnotherPacketSource> source = getSource(audio);
 
     sp<AMessage> format = new AMessage;

@@ -34,6 +34,23 @@ static void InitOMXParams(T *params) {
     params->nVersion.s.nStep = 0;
 }
 
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+uint32_t PCM24ToPCM32(int32_t *dst, uint8_t *src, uint32_t length) {
+    if (length % 3 != 0) {
+        ALOGE("length is not zero");
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < length/3; i++) {
+        int32_t x = (int32_t)(src[3*i+0] | src[3*i+1] << 8 | src[3*i+2] << 16);
+        x = (x << 8) >> 8; // sign extension
+        *dst++ = x;
+    }
+
+    return length/3*4;
+}
+#endif
+
 SoftRaw::SoftRaw(
         const char *name,
         const OMX_CALLBACKTYPE *callbacks,
@@ -204,7 +221,8 @@ OMX_ERRORTYPE SoftRaw::internalSetParameter(
                 return OMX_ErrorBadParameter;
             }
 
-            if (pcmParams->nPortIndex != 0) {
+            //if (pcmParams->nPortIndex != 0) {
+            if ((pcmParams->nPortIndex != 0) && (pcmParams->nPortIndex != 1)) {
                 return OMX_ErrorUndefined;
             }
 
@@ -224,7 +242,17 @@ OMX_ERRORTYPE SoftRaw::internalSetParameter(
             // should match the input buffer size.
             PortInfo *inPort = editPortInfo(0);
             PortInfo *outPort = editPortInfo(1);
-            outPort->mDef.nBufferSize = inPort->mDef.nBufferSize;
+
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+            if (mBitsPerSample == 32)
+            {
+                outPort->mDef.nBufferSize = inPort->mDef.nBufferSize /3 * 4;
+            }else{
+#endif
+                outPort->mDef.nBufferSize = inPort->mDef.nBufferSize;
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+            }
+#endif
             return err;
         }
     }
@@ -246,9 +274,32 @@ void SoftRaw::onQueueFilled(OMX_U32 /* portIndex */) {
         OMX_BUFFERHEADERTYPE *outHeader = outInfo->mHeader;
 
         CHECK_GE(outHeader->nAllocLen, inHeader->nFilledLen);
+        // mtk add for 24bit audio feature
+#ifdef MTK_HIGH_RESOLUTION_AUDIO_SUPPORT
+        if (mBitsPerSample == 32) {
+            ALOGD("AS mBitsPerSample == 32");
+
+            int32_t *tempBufferFor24Bit = (int32_t *)malloc((inHeader->nFilledLen)/3*4);
+            if (tempBufferFor24Bit == nullptr) {
+                ALOGE("Malloc the heap buffer failed!");
+                break;
+            }
+            uint32_t bufferSize = PCM24ToPCM32(tempBufferFor24Bit, inHeader->pBuffer + inHeader->nOffset, inHeader->nFilledLen);
+            memcpy(outHeader->pBuffer, (uint8_t *)tempBufferFor24Bit, bufferSize);
+            inHeader->nFilledLen = bufferSize;
+
+            free(tempBufferFor24Bit);
+            tempBufferFor24Bit = nullptr;
+        } else {
+            memcpy(outHeader->pBuffer,
+                   inHeader->pBuffer + inHeader->nOffset,
+                   inHeader->nFilledLen);
+        }
+#else
         memcpy(outHeader->pBuffer,
                inHeader->pBuffer + inHeader->nOffset,
                inHeader->nFilledLen);
+#endif
 
         outHeader->nFlags = inHeader->nFlags;
         outHeader->nOffset = 0;

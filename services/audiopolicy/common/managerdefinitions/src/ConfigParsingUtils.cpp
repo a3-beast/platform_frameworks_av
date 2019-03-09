@@ -16,6 +16,9 @@
 
 #define LOG_TAG "APM::ConfigParsingUtils"
 //#define LOG_NDEBUG 0
+#if defined(MTK_AUDIO_DEBUG)
+#define LOG_NDEBUG 0
+#endif
 
 #include "ConfigParsingUtils.h"
 #include "AudioGain.h"
@@ -170,6 +173,15 @@ status_t ConfigParsingUtils::loadHwModuleProfile(cnode *root, sp<HwModule> &modu
                    strcmp(node->value, DYNAMIC_VALUE_TAG) != 0) {
             if (role == AUDIO_PORT_ROLE_SINK) {
                 channels = inputChannelMasksFromString(node->value);
+#if defined(MTK_AUDIO)
+                // If the supported channel mask contain AUDIO_CHANNEL_IN_VOICE_UPLINK & AUDIO_CHANNEL_IN_VOICE_DNLINK
+                // We add AUDIO_CHANNEL_IN_VOICE_UPLINK|AUDIO_CHANNEL_IN_VOICE_DNLINK channel mask to supported channel mask list
+                if (channels.indexOf(AUDIO_CHANNEL_IN_VOICE_UPLINK) >= 0
+                    && channels.indexOf(AUDIO_CHANNEL_IN_VOICE_DNLINK) >= 0
+                    && channels.indexOf(AUDIO_CHANNEL_IN_VOICE_UPLINK | AUDIO_CHANNEL_IN_VOICE_DNLINK) < 0) {
+                    channels.add(AUDIO_CHANNEL_IN_VOICE_UPLINK | AUDIO_CHANNEL_IN_VOICE_DNLINK);
+                }
+#endif
             } else {
                 channels = outputChannelMasksFromString(node->value);
             }

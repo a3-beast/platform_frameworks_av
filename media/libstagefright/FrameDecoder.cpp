@@ -218,8 +218,20 @@ status_t FrameDecoder::init(
         return (decoder.get() == NULL) ? NO_MEMORY : err;
     }
 
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+     int SeekMode = static_cast<MediaSource::ReadOptions::SeekMode>(option);
+     bool isSeekingClosest = (SeekMode == MediaSource::ReadOptions::SEEK_CLOSEST)
+             || (SeekMode == MediaSource::ReadOptions::SEEK_FRAME_INDEX);
+     if (!isSeekingClosest)
+         err = decoder->configure(videoFormat, NULL /* surface */, NULL /* crypto */,
+                              MediaCodec::CONFIGURE_FLAG_ENABLE_THUMBNAIL_OPTIMIZATION /* flags */);
+     else
+         err = decoder->configure(
+                 videoFormat, NULL /* surface */, NULL /* crypto */, 0 /* flags */);
+#else
     err = decoder->configure(
             videoFormat, NULL /* surface */, NULL /* crypto */, 0 /* flags */);
+#endif
     if (err != OK) {
         ALOGW("configure returned error %d (%s)", err, asString(err));
         decoder->release();
@@ -272,6 +284,7 @@ status_t FrameDecoder::extractInternal() {
     status_t err = OK;
     bool done = false;
     size_t retriesLeft = kRetryCount;
+
     do {
         size_t index;
         int64_t ptsUs = 0ll;
@@ -281,6 +294,7 @@ status_t FrameDecoder::extractInternal() {
         // outputs. After getting each output, come back and queue the inputs
         // again to keep the decoder busy.
         while (mHaveMoreInputs) {
+
             err = mDecoder->dequeueInputBuffer(&index, 0);
             if (err != OK) {
                 ALOGV("Timed out waiting for input");
@@ -289,6 +303,7 @@ status_t FrameDecoder::extractInternal() {
                 }
                 break;
             }
+
             sp<MediaCodecBuffer> codecBuffer;
             err = mDecoder->getInputBuffer(index, &codecBuffer);
             if (err != OK) {
@@ -301,13 +316,10 @@ status_t FrameDecoder::extractInternal() {
             err = mSource->read(&mediaBuffer, &mReadOptions);
             mReadOptions.clearSeekTo();
             if (err != OK) {
+                ALOGW("Input Error or EOS");
                 mHaveMoreInputs = false;
                 if (!mFirstSample && err == ERROR_END_OF_STREAM) {
-                    (void)mDecoder->queueInputBuffer(
-                            index, 0, 0, 0, MediaCodec::BUFFER_FLAG_EOS);
                     err = OK;
-                } else {
-                    ALOGW("Input Error: err=%d", err);
                 }
                 break;
             }
@@ -345,10 +357,12 @@ status_t FrameDecoder::extractInternal() {
                 if (flags & MediaCodec::BUFFER_FLAG_EOS) {
                     mHaveMoreInputs = false;
                 }
+
             }
         }
 
-        while (err == OK) {
+        while (err == OK ) {
+
             size_t offset, size;
             // wait for a decoded buffer
             err = mDecoder->dequeueOutputBuffer(
@@ -370,6 +384,15 @@ status_t FrameDecoder::extractInternal() {
                     ALOGV("Timed-out waiting for output.. retries left = %zu", retriesLeft);
                     err = OK;
                 } else if (err == OK) {
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+                    if(mOutputFormat == NULL){
+                        ALOGE("get outputFormat fail");
+                        mSource->stop();
+                        mDecoder->release();
+                        mDecoder.clear();
+                        return -1;
+                    }
+#endif
                     // If we're seeking with CLOSEST option and obtained a valid targetTimeUs
                     // from the extractor, decode to the specified frame. Otherwise we're done.
                     ALOGV("Received an output buffer, timeUs=%lld", (long long)ptsUs);
@@ -409,6 +432,7 @@ VideoFrameDecoder::VideoFrameDecoder(
       mTargetTimeUs(-1ll),
       mNumFrames(0),
       mNumFramesDecoded(0) {
+    mHaveAvcOrHevcIDR = false;
 }
 
 sp<AMessage> VideoFrameDecoder::onGetFormatAndSeekOptions(
@@ -473,13 +497,23 @@ status_t VideoFrameDecoder::onInputReceived(
         sampleMeta.findInt64(kKeyTargetTime, &mTargetTimeUs);
         ALOGV("Seeking closest: targetTimeUs=%lld", (long long)mTargetTimeUs);
     }
-
+#ifdef MTK_THUMBNAIL_OPTIMIZATION  //  add for avc or hevc top&bottom case
+    if (!isSeekingClosest) {
+        if (mIsAvcOrHevc && (!mHaveAvcOrHevcIDR) && IsIDR(codecBuffer->data(), codecBuffer->size())) {
+            mHaveAvcOrHevcIDR = true;
+        } else if (mHaveAvcOrHevcIDR) {
+            // sometimes codec need two input frame to decode one correct output.
+            *flags |= MediaCodec::BUFFER_FLAG_EOS;
+        }
+    }
+#else
     if (mIsAvcOrHevc && !isSeekingClosest
             && IsIDR(codecBuffer->data(), codecBuffer->size())) {
         // Only need to decode one IDR frame, unless we're seeking with CLOSEST
         // option, in which case we need to actually decode to targetTimeUs.
         *flags |= MediaCodec::BUFFER_FLAG_EOS;
     }
+#endif
     return OK;
 }
 
@@ -504,7 +538,12 @@ status_t VideoFrameDecoder::onOutputReceived(
     int32_t width, height;
     CHECK(outputFormat->findInt32("width", &width));
     CHECK(outputFormat->findInt32("height", &height));
-
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+    int32_t Stridewidth, SliceHeight;
+    CHECK(outputFormat->findInt32("stride", &Stridewidth));
+    CHECK(outputFormat->findInt32("slice-height", &SliceHeight));
+    ALOGD("Stridewidth=%d, SliceHeight=%d", Stridewidth, SliceHeight);
+#endif
     int32_t crop_left, crop_top, crop_right, crop_bottom;
     if (!outputFormat->findRect("crop", &crop_left, &crop_top, &crop_right, &crop_bottom)) {
         crop_left = crop_top = 0;
@@ -524,6 +563,10 @@ status_t VideoFrameDecoder::onOutputReceived(
 
     int32_t srcFormat;
     CHECK(outputFormat->findInt32("color-format", &srcFormat));
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+    width = Stridewidth;
+    height = SliceHeight;
+#endif
 
     ColorConverter converter((OMX_COLOR_FORMATTYPE)srcFormat, dstFormat());
 

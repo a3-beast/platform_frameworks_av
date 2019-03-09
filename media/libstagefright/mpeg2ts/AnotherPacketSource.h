@@ -125,6 +125,10 @@ private:
     bool wasFormatChange(int32_t discontinuityType) const;
 
     DISALLOW_EVIL_CONSTRUCTORS(AnotherPacketSource);
+
+public:
+    // add for mtk seek
+    void clearKeepFormat();
 };
 
 

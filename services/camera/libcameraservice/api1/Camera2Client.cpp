@@ -102,7 +102,7 @@ status_t Camera2Client::initializeImpl(TProviderPtr providerPtr, const String8& 
     {
         SharedParameters::Lock l(mParameters);
 
-        res = l.mParameters.initialize(mDevice.get(), mDeviceVersion);
+        res = l.mParameters.initialize(&(mDevice->info()), mDeviceVersion);
         if (res != OK) {
             ALOGE("%s: Camera %d: unable to build defaults: %s (%d)",
                     __FUNCTION__, mCameraId, strerror(-res), res);
@@ -250,7 +250,6 @@ status_t Camera2Client::dumpClient(int fd, const Vector<String16>& args) {
     switch (p.sceneMode) {
         case ANDROID_CONTROL_SCENE_MODE_DISABLED:
             result.append("AUTO\n"); break;
-        CASE_APPEND_ENUM(ANDROID_CONTROL_SCENE_MODE_FACE_PRIORITY)
         CASE_APPEND_ENUM(ANDROID_CONTROL_SCENE_MODE_ACTION)
         CASE_APPEND_ENUM(ANDROID_CONTROL_SCENE_MODE_PORTRAIT)
         CASE_APPEND_ENUM(ANDROID_CONTROL_SCENE_MODE_LANDSCAPE)
@@ -781,6 +780,9 @@ status_t Camera2Client::startPreviewL(Parameters &params, bool restart) {
     // If jpeg stream will slow down preview, make sure we remove it before starting preview
     if (params.slowJpegMode) {
         // Pause preview if we are streaming
+//!++
+        if ( lastJpegStreamId!=NO_STREAM ) {
+//!--
         int32_t activeRequestId = mStreamingProcessor->getActiveRequestId();
         if (activeRequestId != 0) {
             res = mStreamingProcessor->togglePauseStream(/*pause*/true);
@@ -809,6 +811,9 @@ status_t Camera2Client::startPreviewL(Parameters &params, bool restart) {
                         __FUNCTION__, mCameraId, strerror(-res), res);
             }
         }
+//!++
+        }
+//!--
     } else {
         res = updateProcessorStream(mJpegProcessor, params);
         if (res != OK) {

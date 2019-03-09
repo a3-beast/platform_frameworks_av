@@ -20,6 +20,7 @@
 
 #include <binder/Parcel.h>
 #include <binder/IMemory.h>
+#include <media/IHDCP.h>
 #include <media/IMediaCodecList.h>
 #include <media/IMediaHTTPService.h>
 #include <media/IMediaPlayerService.h>
@@ -38,10 +39,13 @@ enum {
     CREATE = IBinder::FIRST_CALL_TRANSACTION,
     CREATE_MEDIA_RECORDER,
     CREATE_METADATA_RETRIEVER,
+    MAKE_HDCP,
     ADD_BATTERY_DATA,
     PULL_BATTERY_DATA,
     LISTEN_FOR_REMOTE_DISPLAY,
     GET_CODEC_LIST,
+    ENABLE_REMOTE_DISPLAY,
+    ENABLE_FAST_REMOTE_DISPLAY
 };
 
 class BpMediaPlayerService: public BpInterface<IMediaPlayerService>
@@ -80,6 +84,14 @@ public:
         return interface_cast<IMediaRecorder>(reply.readStrongBinder());
     }
 
+    virtual sp<IHDCP> makeHDCP(bool createEncryptionModule) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
+        data.writeInt32(createEncryptionModule);
+        remote()->transact(MAKE_HDCP, data, &reply);
+        return interface_cast<IHDCP>(reply.readStrongBinder());
+    }
+
     virtual void addBatteryData(uint32_t params) {
         Parcel data, reply;
         data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
@@ -111,6 +123,40 @@ public:
         remote()->transact(GET_CODEC_LIST, data, &reply);
         return interface_cast<IMediaCodecList>(reply.readStrongBinder());
     }
+
+    /// M: MTK WFD added on feature @{
+    virtual status_t enableRemoteDisplay(const char *iface) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
+
+        if (iface != NULL) {
+            data.writeInt32(1);
+            data.writeCString(iface);
+        } else {
+            data.writeInt32(0);
+        }
+
+        remote()->transact(ENABLE_REMOTE_DISPLAY, data, &reply);
+        return reply.readInt32();
+    }
+
+    virtual status_t enableRemoteDisplay(const char *iface, const uint32_t wfdFlags) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
+
+
+        if (iface != NULL) {
+            data.writeInt32(1);
+            data.writeCString(iface);
+        } else {
+            data.writeInt32(0);
+        }
+        data.writeInt32(wfdFlags);
+
+        remote()->transact(ENABLE_FAST_REMOTE_DISPLAY, data, &reply);
+        return reply.readInt32();
+    }
+/// @}
 };
 
 IMPLEMENT_META_INTERFACE(MediaPlayerService, "android.media.IMediaPlayerService");
@@ -143,6 +189,13 @@ status_t BnMediaPlayerService::onTransact(
             reply->writeStrongBinder(IInterface::asBinder(retriever));
             return NO_ERROR;
         } break;
+        case MAKE_HDCP: {
+            CHECK_INTERFACE(IMediaPlayerService, data, reply);
+            bool createEncryptionModule = data.readInt32();
+            sp<IHDCP> hdcp = makeHDCP(createEncryptionModule);
+            reply->writeStrongBinder(IInterface::asBinder(hdcp));
+            return NO_ERROR;
+        } break;
         case ADD_BATTERY_DATA: {
             CHECK_INTERFACE(IMediaPlayerService, data, reply);
             uint32_t params = data.readInt32();
@@ -172,6 +225,27 @@ status_t BnMediaPlayerService::onTransact(
             CHECK_INTERFACE(IMediaPlayerService, data, reply);
             sp<IMediaCodecList> mcl = getCodecList();
             reply->writeStrongBinder(IInterface::asBinder(mcl));
+            return NO_ERROR;
+        } break;
+        case ENABLE_REMOTE_DISPLAY: {
+            CHECK_INTERFACE(IMediaPlayerService, data, reply);
+            const char *iface = NULL;
+            if (data.readInt32()) {
+                iface = data.readCString();
+            }
+            reply->writeInt32(enableRemoteDisplay(iface));
+            return NO_ERROR;
+        } break;
+        case ENABLE_FAST_REMOTE_DISPLAY: {
+            CHECK_INTERFACE(IMediaPlayerService, data, reply);
+            const char *iface = NULL;
+
+            if (data.readInt32()) {
+                iface = data.readCString();
+            }
+            const uint32_t wfdFlags = data.readInt32();
+
+            reply->writeInt32(enableRemoteDisplay(iface, wfdFlags));
             return NO_ERROR;
         } break;
         default:

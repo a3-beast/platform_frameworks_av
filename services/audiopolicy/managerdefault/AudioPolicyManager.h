@@ -48,6 +48,9 @@
 #include <SoundTriggerSession.h>
 #include <SessionRoute.h>
 #include <VolumeCurve.h>
+#include "custom_extensions/AudioPolicyVendorControl.h"  // MTK_AUDIO
+#include "custom_extensions/AudioPolicyManagerCustomImpl.h"  // MTK_AUDIO
+
 
 namespace android {
 
@@ -79,6 +82,8 @@ namespace android {
 // Default minimum length allowed for offloading a compressed track
 // Can be overridden by the audio.offload.min.duration.secs property
 #define OFFLOAD_DEFAULT_MIN_DURATION_SECS 60
+class AudioPolicyManagerCustomInterface;
+class AudioPolicyManagerCustom;
 
 // ----------------------------------------------------------------------------
 // AudioPolicyManager implements audio policy manager behavior common to all platforms.
@@ -88,7 +93,7 @@ class AudioPolicyManager : public AudioPolicyInterface, public AudioPolicyManage
 {
 
 public:
-        explicit AudioPolicyManager(AudioPolicyClientInterface *clientInterface);
+        explicit AudioPolicyManager(AudioPolicyClientInterface *clientInterface, AudioPolicyManagerCustomInterface *customInterface);
         virtual ~AudioPolicyManager();
 
         // AudioPolicyInterface
@@ -196,6 +201,11 @@ public:
         virtual status_t dump(int fd);
 
         virtual bool isOffloadSupported(const audio_offload_info_t& offloadInfo);
+// <MTK_AUDIO_ADD
+        // add with Sample rate Policy
+        virtual status_t startOutputSamplerate(audio_io_handle_t output, audio_stream_type_t stream, audio_session_t session, int samplerate);
+        virtual status_t stopOutputSamplerate(audio_io_handle_t output, audio_stream_type_t stream, audio_session_t session, int samplerate);
+// MTK_AUDIO_ADD>
 
         virtual status_t listAudioPorts(audio_port_role_t role,
                                         audio_port_type_t type,
@@ -248,7 +258,9 @@ public:
         routing_strategy getStrategy(audio_stream_type_t stream) const;
 
         virtual void setRecordSilenced(uid_t uid, bool silenced);
-
+        // MTK_AUDIO
+        virtual status_t setPolicyManagerParameters(int par1, int par2, int par3, int par4);
+        friend class AudioPolicyManagerCustomImpl;
 protected:
         // A constructor that allows more fine-grained control over initialization process,
         // used in automatic tests.
@@ -299,7 +311,11 @@ protected:
         {
             return mDefaultOutputDevice;
         }
-
+        // MTK_AUDIO
+        virtual AudioPolicyVendorControl &getAudioPolicyVendorControl()
+        {
+            return mAudioPolicyVendorControl;
+        }
         void addOutput(audio_io_handle_t output, const sp<SwAudioOutputDescriptor>& outputDesc);
         void removeOutput(audio_io_handle_t output);
         void addInput(audio_io_handle_t input, const sp<AudioInputDescriptor>& inputDesc);
@@ -319,11 +335,7 @@ protected:
                                                      bool fromCache);
 
         bool isStrategyActive(const sp<AudioOutputDescriptor>& outputDesc, routing_strategy strategy,
-                              uint32_t inPastMs = 0, nsecs_t sysTime = 0) const;
-
-        bool isStrategyActiveOnSameModule(const sp<AudioOutputDescriptor>& outputDesc,
-                                                  routing_strategy strategy, uint32_t inPastMs = 0,
-                                                  nsecs_t sysTime = 0) const;
+                              uint32_t inPastMs = 0, nsecs_t sysTime = 0, bool bShareHwModule = false) const;   // MTK_AUDIO
 
         // change the route of the specified output. Returns the number of ms we have slept to
         // allow new routing to take effect in certain cases.
@@ -427,7 +439,7 @@ protected:
         // changed: connected device, phone state, force use, output start, output stop..
         // see getDeviceForStrategy() for the use of fromCache parameter
         audio_devices_t getNewOutputDevice(const sp<AudioOutputDescriptor>& outputDesc,
-                                           bool fromCache);
+                                           bool fromCache, bool bShareHwModule = true); // MTK_AUDIO
 
         // updates cache of device used by all strategies (mDeviceForStrategy[])
         // must be called every time a condition that affects the device choice for a given strategy is
@@ -460,7 +472,8 @@ protected:
         // Returns the number of ms waited
         virtual uint32_t  checkDeviceMuteStrategies(const sp<AudioOutputDescriptor>& outputDesc,
                                             audio_devices_t prevDevice,
-                                            uint32_t delayMs);
+                                            uint32_t delayMs,
+                                            bool mtkSkipCheckMuteForChangeDevice = false);
 
         audio_io_handle_t selectOutput(const SortedVector<audio_io_handle_t>& outputs,
                                        audio_output_flags_t flags,
@@ -480,6 +493,7 @@ protected:
 
         audio_io_handle_t selectOutputForMusicEffects();
 
+#if 0
         virtual status_t addAudioPatch(audio_patch_handle_t handle, const sp<AudioPatch>& patch)
         {
             return mAudioPatches.addAudioPatch(handle, patch);
@@ -488,6 +502,10 @@ protected:
         {
             return mAudioPatches.removeAudioPatch(handle);
         }
+#else   // MTK_FM_SUPPORT
+        virtual status_t addAudioPatch(audio_patch_handle_t handle, const sp<AudioPatch>& patch);
+        virtual status_t removeAudioPatch(audio_patch_handle_t handle);
+#endif
 
         audio_devices_t availablePrimaryOutputDevices() const
         {
@@ -607,10 +625,13 @@ protected:
 
         // Audio Policy Engine Interface.
         AudioPolicyManagerInterface *mEngine;
+        // MTK_AUDIO
+        AudioPolicyVendorControl mAudioPolicyVendorControl;
 
         // Surround formats that are enabled.
         std::unordered_set<audio_format_t> mSurroundFormats;
 private:
+        AudioPolicyManagerCustomInterface *mpAudioPolicyMTKInterface;   // MTK_AUDIO
         // Add or remove AC3 DTS encodings based on user preferences.
         void filterSurroundFormats(FormatVector *formatsPtr);
         void filterSurroundChannelMasks(ChannelsVector *channelMasksPtr);

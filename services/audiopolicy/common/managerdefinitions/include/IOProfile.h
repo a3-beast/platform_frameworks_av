@@ -151,6 +151,12 @@ public:
     // (AudioTrack or AudioRecord) but the number of active HAL streams.
     uint32_t     curActiveCount;
 
+    // MTK_AUDIO since we can't call getSupportedDevices().remove()
+    ssize_t removeSupportedDevice(const sp<DeviceDescriptor> &device)
+    {
+        return mSupportedDevices.remove(device);
+    }
+
 private:
     DeviceVector mSupportedDevices; // supported devices: this input/output can be routed from/to
 };

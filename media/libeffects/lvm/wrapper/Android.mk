@@ -15,6 +15,9 @@ LOCAL_SRC_FILES:= \
 
 LOCAL_CFLAGS += -fvisibility=hidden -DBUILD_FLOAT -DHIGHER_FS
 LOCAL_CFLAGS += -Wall -Werror
+ifeq ($(MTK_AUDIO),yes)
+LOCAL_CFLAGS += -DMTK_AUDIO_FIX_DEFAULT_DEFECT
+endif
 
 LOCAL_MODULE:= libbundlewrapper
 
@@ -36,7 +39,7 @@ LOCAL_C_INCLUDES += \
 	$(call include-path-for, audio-utils) \
 
 LOCAL_HEADER_LIBRARIES += libhardware_headers
-include $(BUILD_SHARED_LIBRARY)
+include $(MTK_SHARED_LIBRARY)
 
 
 # reverb wrapper

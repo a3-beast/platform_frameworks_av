@@ -629,6 +629,11 @@ status_t OMXNodeInstance::setParameter(
         return BAD_INDEX;
     }
 
+    if (mHandle == NULL) {
+        //client died and mhandle is cleared.
+        return BAD_VALUE;
+    }
+
     OMX_ERRORTYPE err = OMX_SetParameter(
             mHandle, index, const_cast<void *>(params));
     CLOG_IF_ERROR(setParameter, err, "%s(%#x)", asString(extIndex), index);
@@ -1071,7 +1076,7 @@ status_t OMXNodeInstance::useBuffer(
         case OMXBuffer::kBufferTypePreset: {
             if (mPortMode[portIndex] != IOMX::kPortModeDynamicANWBuffer
                     && mPortMode[portIndex] != IOMX::kPortModeDynamicNativeHandle) {
-                break;
+                //break;
             }
             return useBuffer_l(portIndex, NULL, NULL, buffer);
         }
@@ -1079,7 +1084,7 @@ status_t OMXNodeInstance::useBuffer(
         case OMXBuffer::kBufferTypeSharedMem: {
             if (mPortMode[portIndex] != IOMX::kPortModePresetByteBuffer
                     && mPortMode[portIndex] != IOMX::kPortModeDynamicANWBuffer) {
-                break;
+                //break;
             }
             return useBuffer_l(portIndex, omxBuffer.mMem, NULL, buffer);
         }
@@ -1087,7 +1092,7 @@ status_t OMXNodeInstance::useBuffer(
         case OMXBuffer::kBufferTypeANWBuffer: {
             if (mPortMode[portIndex] != IOMX::kPortModePresetANWBuffer
                     && mPortMode[portIndex] != IOMX::kPortModeDynamicANWBuffer) {
-                break;
+                //break;
             }
             return useGraphicBuffer_l(portIndex, omxBuffer.mGraphicBuffer, buffer);
         }
@@ -1096,7 +1101,7 @@ status_t OMXNodeInstance::useBuffer(
                 if (mPortMode[portIndex] != IOMX::kPortModePresetByteBuffer
                         && mPortMode[portIndex] != IOMX::kPortModeDynamicANWBuffer
                         && mPortMode[portIndex] != IOMX::kPortModeDynamicNativeHandle) {
-                    break;
+                    //break;
                 }
                 sp<IHidlMemory> hidlMemory = mapMemory(omxBuffer.mHidlMemory);
                 if (hidlMemory == nullptr) {
@@ -1173,6 +1178,12 @@ status_t OMXNodeInstance::useBuffer_l(
         (portIndex == kPortIndexInput)
             ? kRequiresAllocateBufferOnInputPorts
             : kRequiresAllocateBufferOnOutputPorts;
+
+    //mtk add,client died and mhandle is cleared.
+    if (mHandle == NULL) {
+        ALOGE("client died and mhandle is cleared.");
+        return BAD_VALUE;
+    }
 
     // we use useBuffer for output metadata regardless of quirks
     if (!isOutputGraphicMetadata && (mQuirks & requiresAllocateBufferBit)) {
@@ -1610,15 +1621,12 @@ status_t OMXNodeInstance::freeBuffer(
     }
     BufferMeta *buffer_meta = static_cast<BufferMeta *>(header->pAppPrivate);
 
-    // Invalidate buffers in the client side first before calling OMX_FreeBuffer.
-    // If not, pending events in the client side might access the buffers after free.
-    invalidateBufferID(buffer);
-
     OMX_ERRORTYPE err = OMX_FreeBuffer(mHandle, portIndex, header);
     CLOG_IF_ERROR(freeBuffer, err, "%s:%u %#x", portString(portIndex), portIndex, buffer);
 
     delete buffer_meta;
     buffer_meta = NULL;
+    invalidateBufferID(buffer);
 
     return StatusFromOMXError(err);
 }
@@ -2296,7 +2304,8 @@ OMX_ERRORTYPE OMXNodeInstance::OnEmptyBufferDone(
     if (instance->mDying) {
         return OMX_ErrorNone;
     }
-    int fenceFd = instance->retrieveFenceFromMeta_l(pBuffer, kPortIndexOutput);
+    //fix google issue, EmptyThisBufferDone is for input buffer only
+    int fenceFd = instance->retrieveFenceFromMeta_l(pBuffer, kPortIndexInput);
 
     omx_message msg;
     msg.type = omx_message::EMPTY_BUFFER_DONE;

@@ -1,4 +1,9 @@
 /*
+* Copyright (C) 2014 MediaTek Inc.
+* Modification based on code covered by the mentioned copyright
+* and/or permission notice(s).
+*/
+/*
  * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +49,10 @@ ElementaryStreamQueue::ElementaryStreamQueue(Mode mode, uint32_t flags)
       mEOSReached(false),
       mCASystemId(0),
       mAUIndex(0) {
+#ifdef MTK_SEEK_AND_DURATION
+    // add for mtk seek method
+    mSeeking = false;
+#endif
 
     ALOGV("ElementaryStreamQueue(%p) mode %x  flags %x  isScrambled %d  isSampleEncrypted %d",
             this, mode, flags, isScrambled(), isSampleEncrypted());
@@ -224,6 +233,17 @@ static bool IsSeeminglyValidADTSHeader(
         return false;
     }
 
+    // add for mtk, bug fix of bad file
+    // in case of find the wrong error.
+    uint8_t number_of_raw_data_blocks_in_frame;
+    number_of_raw_data_blocks_in_frame = (ptr[6]) & 0x03;
+    if (number_of_raw_data_blocks_in_frame != 0) {
+        ALOGE("Error: fake header here number_of_raw_data_blocks_in_frame=%d",
+             number_of_raw_data_blocks_in_frame);
+        return false;
+    } // add for ALPS03586349
+    //  end of add for mtk
+
     size_t frameLengthInHeader =
             ((ptr[3] & 3) << 11) + (ptr[4] << 3) + ((ptr[5] >> 5) & 7);
     if (frameLengthInHeader > size) {
@@ -300,6 +320,7 @@ status_t ElementaryStreamQueue::appendData(
                 }
 
                 if (startOffset < 0) {
+                    ALOGE("appendData::H264 this is not a valid ES Frame");
                     return ERROR_MALFORMED;
                 }
 
@@ -429,6 +450,7 @@ status_t ElementaryStreamQueue::appendData(
                 }
 
                 if (startOffset < 0) {
+                    ALOGW("cannot find MPEGAudio Header, ignore it");
                     return ERROR_MALFORMED;
                 }
 
@@ -1064,7 +1086,11 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
             }
 
             foundSlice = true;
+#ifdef MTK_SEEK_AND_DURATION
+        } else if ((nalType == 9 || nalType == 7 || nalType == 8) && foundSlice) {
+#else
         } else if ((nalType == 9 || nalType == 7) && foundSlice) {
+#endif
             // Access unit delimiter and SPS will be associated with the
             // next frame.
 
@@ -1080,6 +1106,12 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
 
             size_t auSize = 4 * nals.size() + totalSize;
             sp<ABuffer> accessUnit = new ABuffer(auSize);
+#ifdef MTK_SEEK_AND_DURATION
+            // add for store all nals when seek, MakeAVCCodecSpecificData use MultiAccessUnit.
+            // as nals before isIFrame are droped which not been memcpy to accessUnit.
+            // this will cause decode garbled when MakeAVCCodecSpecificData using accessUnit.
+            sp<ABuffer> MultiAccessUnit = new ABuffer(auSize);
+#endif
             sp<ABuffer> sei;
 
             if (seiCount > 0) {
@@ -1091,6 +1123,9 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
             AString out;
 #endif
 
+#ifdef MTK_SEEK_AND_DURATION
+            size_t dstOffset1 = 0;
+#endif
             size_t dstOffset = 0;
             size_t seiIndex = 0;
             size_t shrunkBytes = 0;
@@ -1118,6 +1153,22 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
                 out.append(tmp);
 #endif
 
+#ifdef MTK_SEEK_AND_DURATION
+                memcpy(MultiAccessUnit->data() + dstOffset1, "\x00\x00\x00\x01", 4);
+                memcpy(MultiAccessUnit->data() + dstOffset1 + 4,
+                       mBuffer->data() + pos.nalOffset,
+                       pos.nalSize);
+                dstOffset1 += pos.nalSize + 4;
+
+                if (mSeeking) {
+                    if (nalType == 7) {
+                        ALOGI("found I frame when seek, nalType=%d, nalSize:%zu", nalType, nalSize);
+                        mSeeking = false;   // found sps before I frame, seek complete
+                    } else {
+                        continue;  // nals dropped before I Frame when seek, not memcpy.
+                    }
+                }
+#endif
                 memcpy(accessUnit->data() + dstOffset, "\x00\x00\x00\x01", 4);
 
                 if (mSampleDecryptor != NULL && (nalType == 1 || nalType == 5)) {
@@ -1164,7 +1215,14 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
                 ALOGE("Negative timeUs");
                 return NULL;
             }
+#ifdef MTK_SEEK_AND_DURATION
+            // must setRange because real data size maybe not equal to ausize when seek
+            accessUnit->setRange(0, dstOffset);
 
+            if (dstOffset == 0)  // dstOffset maybe 0 when seek
+                return NULL;
+
+#endif
             accessUnit->meta()->setInt64("timeUs", timeUs);
             if (foundIDR) {
                 accessUnit->meta()->setInt32("isSync", 1);
@@ -1172,11 +1230,19 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitH264() {
 
             if (mFormat == NULL) {
                 mFormat = new MetaData;
+#ifdef MTK_SEEK_AND_DURATION
+                if (!MakeAVCCodecSpecificData(*mFormat,
+                        MultiAccessUnit->data(),
+                        MultiAccessUnit->size())) {
+                    mFormat.clear();
+                }
+#else
                 if (!MakeAVCCodecSpecificData(*mFormat,
                         accessUnit->data(),
                         accessUnit->size())) {
                     mFormat.clear();
                 }
+#endif
             }
 
             if (mSampleDecryptor != NULL && shrunkBytes > 0) {
@@ -1225,7 +1291,9 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEGAudio() {
     if (!GetMPEGAudioFrameSize(
                 header, &frameSize, &samplingRate, &numChannels,
                 &bitrate, &numSamples)) {
-        ALOGE("Failed to get audio frame size");
+        ALOGE("Failed to get audio frame size, skip this buffer");
+        // add for mtk, skip buffer when framesize is 0, ALPS03571189
+        mBuffer->setRange(0, 0);
         return NULL;
     }
 
@@ -1357,6 +1425,9 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEGVideo() {
     bool brokenLink = false;
 
     size_t offset = 0;
+#ifdef MTK_SEEK_AND_DURATION
+    int lastGOPOff = -1;
+#endif
     while (offset + 3 < size) {
         if (memcmp(&data[offset], "\x00\x00\x01", 3)) {
             ++offset;
@@ -1435,7 +1506,21 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEGVideo() {
             userDataPositions.add(offset);
         }
 
-        if (mFormat != NULL && currentStartCode == 0x00) {
+#ifdef MTK_SEEK_AND_DURATION
+        // save the GOP, send to decode when seek. if Format is NULL, lastGOPOff make no sense
+        if (mSeeking && currentStartCode == 0xB8 && mFormat != NULL) {
+            lastGOPOff = offset;
+        }
+        if (mFormat != NULL && (currentStartCode == 0x00 ||
+            (sawPictureStart && currentStartCode == 0xB7)))  // ALPS00473447
+#else
+        if (mFormat != NULL && currentStartCode == 0x00)
+#endif
+        {
+#ifdef MTK_SEEK_AND_DURATION
+            if (!foundIFrameAtMPEGVideo(data, &lastGOPOff, &offset, &size))
+                continue;
+#endif
             // Picture start
 
             if (!sawPictureStart) {
@@ -1477,7 +1562,7 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEGVideo() {
                                     mpegUserData->data() + i * sizeof(size_t),
                                     &userDataPositions[i], sizeof(size_t));
                         }
-                        accessUnit->meta()->setBuffer("mpeg-user-data", mpegUserData);
+                        accessUnit->meta()->setBuffer("mpegUserData", mpegUserData);
                     }
                 }
 
@@ -1488,6 +1573,9 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEGVideo() {
         ++offset;
     }
 
+#ifdef MTK_SEEK_AND_DURATION
+    discardBufferWhenSeek(&offset);
+#endif
     return NULL;
 }
 
@@ -1639,7 +1727,10 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEG4Video() {
                     int vopCodingType = (data[offset + 4] & 0xc0) >> 6;
 
                     offset += chunkSize;
-
+#ifdef MTK_SEEK_AND_DURATION
+                    if (!foundIFrameAtMPEG4Video(data, &discard))
+                        break;
+#endif
                     sp<ABuffer> accessUnit = new ABuffer(offset);
                     memcpy(accessUnit->data(), data, offset);
 
@@ -1736,5 +1827,76 @@ void ElementaryStreamQueue::signalNewSampleAesKey(const sp<AMessage> &keyItem) {
     mSampleDecryptor->signalNewSampleAesKey(keyItem);
 }
 
+#ifdef MTK_SEEK_AND_DURATION
+// add for mtk seek method
+void ElementaryStreamQueue::setSeeking() {
+    mSeeking = true;
+}
+
+bool ElementaryStreamQueue::foundIFrameAtMPEGVideo(
+        const uint8_t *data, int* lastGOPOff, size_t *offset, size_t *size) {
+    if (mSeeking) {
+        if (((data[*offset + 5] >> 3) & 0x7) == 1) {  // I frame
+            mSeeking = false;
+
+            size_t tmpOff = *offset;
+            if (*lastGOPOff != -1) {
+                tmpOff = *lastGOPOff;
+                ALOGI("Send GOP when seeking, offset:%zu lastGOPOff:%x",
+                     *offset, *lastGOPOff);
+            }
+            memmove(mBuffer->data(), mBuffer->data() + tmpOff,
+                    (*size) - tmpOff);
+            *size -= tmpOff;
+            (void) fetchTimestamp(tmpOff);
+            *offset = *offset - tmpOff;
+            mBuffer->setRange(0, (*size));
+            ALOGI("Found I Frame when seeking");
+            return true;
+        } else {
+            (*offset)++;
+            return false;
+        }
+    }
+    return true;
+}
+
+void ElementaryStreamQueue::discardBufferWhenSeek(size_t *offset) {
+    if (mSeeking) {             // discard buffer
+        (void) fetchTimestamp(*offset);
+        memmove(mBuffer->data(),
+                mBuffer->data() + (*offset), mBuffer->size() - (*offset));
+
+        mBuffer->setRange(0, mBuffer->size() - (*offset));
+        *offset = 0;
+    }
+}
+
+bool ElementaryStreamQueue::foundIFrameAtMPEG4Video(const uint8_t *data, bool *discard) {
+    if (mSeeking) {
+        switch (data[4] & 0xC0) {
+        case 0x00:
+            mSeeking = false;
+            ALOGI("I frame");
+            break;
+        case 0x40:
+            ALOGI("P frame");
+            break;
+        case 0x80:
+            ALOGI("B frame");
+            break;
+        default:
+            ALOGI("default");
+            break;
+        }
+    }
+
+    if (mSeeking) {
+        *discard = true;
+        return false;
+    }
+    return true;
+}
+#endif
 
 }  // namespace android

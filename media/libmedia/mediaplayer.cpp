@@ -46,6 +46,10 @@
 #include <system/audio.h>
 #include <system/window.h>
 
+//mtkadd+
+#include "mtkWhiteList.h"
+
+
 namespace android {
 
 using media::VolumeShaper;
@@ -279,6 +283,8 @@ status_t MediaPlayer::prepareAsync_l()
             mPlayer->setAudioStreamType(mStreamType);
         }
         mCurrentState = MEDIA_PLAYER_PREPARING;
+      //mtkadd for white list
+        addWriteList(mPlayer);
         return mPlayer->prepareAsync();
     }
     ALOGE("prepareAsync called in state %d, mPlayer(%p)", mCurrentState, mPlayer.get());
@@ -920,7 +926,8 @@ void MediaPlayer::notify(int msg, int ext1, int ext2, const Parcel *obj)
         break;
     case MEDIA_SEEK_COMPLETE:
         ALOGV("Received seek complete");
-        if (mSeekPosition != mCurrentPosition || (mSeekMode != mCurrentSeekMode)) {
+        if ((mSeekPosition != mCurrentPosition && abs(mCurrentPosition - mSeekPosition) >= 1000) ||
+             (mSeekMode != mCurrentSeekMode)) {
             ALOGV("Executing queued seekTo(%d, %d)", mCurrentPosition, mCurrentSeekMode);
             mSeekPosition = -1;
             mSeekMode = MediaPlayerSeekMode::SEEK_PREVIOUS_SYNC;

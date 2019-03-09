@@ -33,6 +33,43 @@ LOCAL_REQUIRED_MODULES += \
     liboggextractor \
     libwavextractor \
 
+# mtk extractor libraries
+LOCAL_REQUIRED_MODULES += \
+    libmtkmkvextractor \
+    libmtkmpeg2extractor \
+
+ifeq ($(strip $(MTK_WMV_PLAYBACK_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkasfextractor
+endif
+
+ifeq ($(strip $(MTK_AVI_PLAYBACK_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkaviextractor
+endif
+
+ifeq ($(strip $(MTK_FLV_PLAYBACK_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkflvextractor
+endif
+
+ifeq ($(strip $(MTK_AUDIO_ADPCM_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkadpcmextractor
+endif
+
+# mtk extractor libraries
+ifeq ($(strip $(MTK_AUDIO_APE_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkapeextractor
+endif
+
+# mtk extractor libraries
+ifeq ($(strip $(MTK_AUDIO_ALAC_SUPPORT)), yes)
+LOCAL_REQUIRED_MODULES += \
+    libmtkalacextractor
+endif
+
 LOCAL_SRC_FILES := main_extractorservice.cpp
 LOCAL_SHARED_LIBRARIES := libmedia libmediaextractorservice libbinder libutils \
     liblog libbase libicuuc libavservices_minijail

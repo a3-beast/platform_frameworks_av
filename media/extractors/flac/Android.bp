@@ -40,4 +40,25 @@ cc_library_shared {
         },
     },
 
+    defaults: [
+        "mtk_libflacextractor_defaults",
+    ],
+
+}
+
+bootstrap_go_package {
+    name:"soong-libflacextractor-mediatek",
+    pkgPath:"android/soong/libflacextractor/mediatek",
+    deps:[
+        "soong-android",
+        "soong-cc",
+    ],
+    srcs:[
+        "libflacextractor.go",
+    ],
+    pluginFor:["soong_build"],
+}
+
+mtk_libflacextractor_defaults {
+    name: "mtk_libflacextractor_defaults",
 }

@@ -139,9 +139,16 @@ void MPEG2TSWriter::SourceInfo::start(const sp<AMessage> &notify, const sp<MetaD
 
 void MPEG2TSWriter::SourceInfo::stop() {
     mLooper->unregisterHandler(id());
-    mLooper->stop();
-
+//  add for mtk
+//  MediaCodecSource::read() may have blocked for no more data to read after setStopTimeUs()
+//  We need stop mSource first
     mSource->stop();
+    mLooper->stop();
+//  ~add for mtk
+
+//   mLooper->stop();
+//   mSource->stop();
+
 }
 
 void MPEG2TSWriter::SourceInfo::extractCodecSpecificData() {

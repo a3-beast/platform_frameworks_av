@@ -1906,7 +1906,8 @@ private:
             mLastMediaTimeUs = mediaTimeUs;
         }
 
-        if (mediaTimeUs < 0) {
+        //modify by mtk, for compatible some server behavior(first SR time stamp large than first packet)
+        if (mediaTimeUs < 0 && mSeekable == false) {
             ALOGV("dropping early accessUnit.");
             return false;
         }

@@ -135,6 +135,10 @@ public:
     void dump(int fd, int spaces, bool verbose = true) const;
     void log(const char* indent) const;
 
+    // MTK_AUDIO
+    bool isSamplingRateSupport(uint32_t samplingRate);
+    bool isChannelMaskSupport(audio_channel_mask_t channelMask);
+
     AudioGainCollection mGains; // gain controllers
     sp<HwModule> mModule;                 // audio HW module exposing this I/O stream
 

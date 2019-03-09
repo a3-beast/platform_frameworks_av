@@ -45,11 +45,11 @@ public:
     // type can be 'stsz' or 'stz2'.
     status_t setSampleSizeParams(
             uint32_t type, off64_t data_offset, size_t data_size);
-
-    status_t setTimeToSampleParams(off64_t data_offset, size_t data_size);
-
+    //mtkadd param timescaleFactor
+    status_t setTimeToSampleParams(off64_t data_offset, size_t data_size, uint32_t timescaleFactor = 0);
+    //mtkadd param timescaleFactor
     status_t setCompositionTimeToSampleParams(
-            off64_t data_offset, size_t data_size);
+            off64_t data_offset, size_t data_size, uint32_t timescaleFactor = 0);
 
     status_t setSyncSampleParams(off64_t data_offset, size_t data_size);
 
@@ -164,6 +164,13 @@ private:
 
     SampleTable(const SampleTable &);
     SampleTable &operator=(const SampleTable &);
+    //mtkadd+
+public:
+    status_t setPredictSampleSize(uint32_t sampleSize) {
+        mDefaultSampleSize = sampleSize;
+        return OK;
+    }
+
 };
 
 }  // namespace android

@@ -30,6 +30,11 @@ cc_binary {
         "libbinder",
         "libdl",
         "libselinux",
+        "libdrmmtkutil",
+    ],
+
+    include_dirs: [
+        "vendor/mediatek/proprietary/frameworks/av/drm/include",
     ],
 
     static_libs: ["libdrmframeworkcommon"],
@@ -43,4 +48,31 @@ cc_binary {
     compile_multilib: "32",
 
     init_rc: ["drmserver.rc"],
+    defaults: [
+        "mtk_libdrm_server_defaults",
+    ],
+}
+bootstrap_go_package {
+    name: "soon-omadrm-mediatek",
+    pkgPath: "android/soong/omadrm-mediatek",
+    deps: [
+        "blueprint",
+        "blueprint-pathtools",
+        "soong",
+        "soong-android",
+        "soong-cc",
+        "soong-genrule",
+        "soong-android-mediatek",
+    ],
+    srcs: [
+        "mtkdrmserver.go",
+    ],
+    pluginFor: ["soong_build"],
+}
+
+mtk_drm_server_defaults {
+    name: "mtk_libdrm_server_defaults",
+    shared_libs: [
+        "libcutils",
+    ],
 }

@@ -35,6 +35,10 @@
 #include <media/stagefright/MediaExtractorFactory.h>
 #include <media/stagefright/MetaData.h>
 #include <media/CharacterEncodingDetector.h>
+#ifdef MTK_DRM_APP
+#include <drmutils/drm_utils_mtk.h>
+#include <utils/String8.h>
+#endif
 
 namespace android {
 
@@ -68,6 +72,15 @@ status_t StagefrightMetadataRetriever::setDataSource(
     }
 
     mExtractor = MediaExtractorFactory::Create(mSource);
+#ifdef MTK_DRM_APP
+    // after it attempts to create extractor: for .dcf file with invalid rights,
+    //   the mExtractor will be NULL. We need to return OK here directly.
+    if (mExtractor == NULL && IsOMADrm(uri)) {
+        // we assume it's file path name - for OMA DRM v1
+        ALOGD("setDataSource() : it is a OMA DRM v1 .dcf file. return OK");
+        return OK;
+    }
+#endif
 
     if (mExtractor == NULL) {
         ALOGE("Unable to instantiate an extractor for '%s'.", uri);
@@ -98,6 +111,15 @@ status_t StagefrightMetadataRetriever::setDataSource(
     }
 
     mExtractor = MediaExtractorFactory::Create(mSource);
+#ifdef MTK_DRM_APP
+    // OMA DRM v1 implementation:
+    // after it attempts to create extractor: for .dcf file with invalid rights,
+    //   the mExtractor will be NULL. We need to return OK here directly.
+    if (mExtractor == NULL && IsOMADrm(fd)) {
+        ALOGD("setDataSource() : it is a OMA DRM v1 .dcf file. return OK");
+        return OK;
+    }
+#endif
 
     if (mExtractor == NULL) {
         mSource.clear();
@@ -205,12 +227,20 @@ sp<IMemory> StagefrightMetadataRetriever::getImageInternal(
     }
 
     Vector<AString> matchingCodecs;
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+    MediaCodecList::findMatchingCodecs(
+            mime,
+            false, /* encoder */
+            0,
+            &matchingCodecs);
+    ALOGD("matchingCodecs size is %zu", matchingCodecs.size());
+#else
     MediaCodecList::findMatchingCodecs(
             mime,
             false, /* encoder */
             MediaCodecList::kPreferSoftwareCodecs,
             &matchingCodecs);
-
+#endif
     for (size_t i = 0; i < matchingCodecs.size(); ++i) {
         const AString &componentName = matchingCodecs[i];
         sp<ImageDecoder> decoder = new ImageDecoder(componentName, trackMeta, source);
@@ -326,12 +356,20 @@ status_t StagefrightMetadataRetriever::getFrameInternal(
     CHECK(trackMeta->findCString(kKeyMIMEType, &mime));
 
     Vector<AString> matchingCodecs;
+#ifdef MTK_THUMBNAIL_OPTIMIZATION
+    MediaCodecList::findMatchingCodecs(
+            mime,
+            false, /* encoder */
+            0,
+            &matchingCodecs);
+    ALOGD("matchingCodecs size is %zu", matchingCodecs.size());
+#else
     MediaCodecList::findMatchingCodecs(
             mime,
             false, /* encoder */
             MediaCodecList::kPreferSoftwareCodecs,
             &matchingCodecs);
-
+#endif
     for (size_t i = 0; i < matchingCodecs.size(); ++i) {
         const AString &componentName = matchingCodecs[i];
         VideoFrameDecoder decoder(componentName, trackMeta, source);
@@ -396,6 +434,13 @@ const char *StagefrightMetadataRetriever::extractMetadata(int keyCode) {
 }
 
 void StagefrightMetadataRetriever::parseMetaData() {
+#ifdef MTK_DRM_APP
+    // OMA DRM v1 implementation: NULL extractor means .dcf without valid rights
+    if (mExtractor.get() == NULL) {
+        ALOGD("Invalid rights for OMA DRM v1 file. NULL extractor and cannot parse meta data.");
+        return;
+    }
+#endif
     sp<MetaData> meta = mExtractor->getMetaData();
 
     if (meta == NULL) {

@@ -140,6 +140,14 @@ static status_t configureSignals() {
 }
 
 /*
+ * Returns "true" if the device is rotated 90 degrees.
+ */
+static bool isDeviceRotated(int orientation) {
+    return orientation != DISPLAY_ORIENTATION_0 &&
+            orientation != DISPLAY_ORIENTATION_180;
+}
+
+/*
  * Configures and starts the MediaCodec encoder.  Obtains an input surface
  * from the codec.
  */
@@ -234,11 +242,22 @@ static status_t setDisplayProjection(
         const DisplayInfo& mainDpyInfo) {
 
     // Set the region of the layer stack we're interested in, which in our
-    // case is "all of it".
-    Rect layerStackRect(mainDpyInfo.w, mainDpyInfo.h);
+    // case is "all of it".  If the app is rotated (so that the width of the
+    // app is based on the height of the display), reverse width/height.
+    bool deviceRotated = isDeviceRotated(mainDpyInfo.orientation);
+    uint32_t sourceWidth, sourceHeight;
+    if (!deviceRotated) {
+        sourceWidth = mainDpyInfo.w;
+        sourceHeight = mainDpyInfo.h;
+    } else {
+        ALOGV("using rotated width/height");
+        sourceHeight = mainDpyInfo.w;
+        sourceWidth = mainDpyInfo.h;
+    }
+    Rect layerStackRect(sourceWidth, sourceHeight);
 
     // We need to preserve the aspect ratio of the display.
-    float displayAspect = (float) mainDpyInfo.h / (float) mainDpyInfo.w;
+    float displayAspect = (float) sourceHeight / (float) sourceWidth;
 
 
     // Set the way we map the output onto the display surface (which will
@@ -315,22 +334,6 @@ static status_t prepareVirtualDisplay(const DisplayInfo& mainDpyInfo,
 }
 
 /*
- * Set the main display width and height to the actual width and height
- */
-static status_t getActualDisplaySize(const sp<IBinder>& mainDpy, DisplayInfo* mainDpyInfo) {
-    Rect viewport;
-    status_t err = SurfaceComposerClient::getDisplayViewport(mainDpy, &viewport);
-    if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to get display viewport\n");
-        return err;
-    }
-    mainDpyInfo->w = viewport.width();
-    mainDpyInfo->h = viewport.height();
-
-    return NO_ERROR;
-}
-
-/*
  * Runs the MediaCodec encoder, sending the output to the MediaMuxer.  The
  * input frames are coming from the virtual display as fast as SurfaceFlinger
  * wants to send them.
@@ -400,22 +403,14 @@ static status_t runEncoder(const sp<MediaCodec>& encoder,
                     // useful stuff is hard to get at without a Dalvik VM.
                     err = SurfaceComposerClient::getDisplayInfo(mainDpy,
                             &mainDpyInfo);
-                    if (err == NO_ERROR) {
-                        err = getActualDisplaySize(mainDpy, &mainDpyInfo);
-                        if (err != NO_ERROR) {
-                            fprintf(stderr, "ERROR: unable to set actual display size\n");
-                            return err;
-                        }
-
-                        if (orientation != mainDpyInfo.orientation) {
-                            ALOGD("orientation changed, now %d", mainDpyInfo.orientation);
-                            SurfaceComposerClient::Transaction t;
-                            setDisplayProjection(t, virtualDpy, mainDpyInfo);
-                            t.apply();
-                            orientation = mainDpyInfo.orientation;
-                        }
-                    } else {
+                    if (err != NO_ERROR) {
                         ALOGW("getDisplayInfo(main) failed: %d", err);
+                    } else if (orientation != mainDpyInfo.orientation) {
+                        ALOGD("orientation changed, now %d", mainDpyInfo.orientation);
+                        SurfaceComposerClient::Transaction t;
+                        setDisplayProjection(t, virtualDpy, mainDpyInfo);
+                        t.apply();
+                        orientation = mainDpyInfo.orientation;
                     }
                 }
 
@@ -557,10 +552,6 @@ static FILE* prepareRawOutput(const char* fileName) {
     return rawFp;
 }
 
-static inline uint32_t floorToEven(uint32_t num) {
-    return num & ~1;
-}
-
 /*
  * Main "do work" start point.
  *
@@ -588,13 +579,6 @@ static status_t recordScreen(const char* fileName) {
         fprintf(stderr, "ERROR: unable to get display characteristics\n");
         return err;
     }
-
-    err = getActualDisplaySize(mainDpy, &mainDpyInfo);
-    if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to set actual display size\n");
-        return err;
-    }
-
     if (gVerbose) {
         printf("Main display is %dx%d @%.2ffps (orientation=%u)\n",
                 mainDpyInfo.w, mainDpyInfo.h, mainDpyInfo.fps,
@@ -602,12 +586,12 @@ static status_t recordScreen(const char* fileName) {
         fflush(stdout);
     }
 
-    // Encoder can't take odd number as config
+    bool rotated = isDeviceRotated(mainDpyInfo.orientation);
     if (gVideoWidth == 0) {
-        gVideoWidth = floorToEven(mainDpyInfo.w);
+        gVideoWidth = rotated ? mainDpyInfo.h : mainDpyInfo.w;
     }
     if (gVideoHeight == 0) {
-        gVideoHeight = floorToEven(mainDpyInfo.h);
+        gVideoHeight = rotated ? mainDpyInfo.w : mainDpyInfo.h;
     }
 
     // Configure and start the encoder.
@@ -691,12 +675,18 @@ static status_t recordScreen(const char* fileName) {
             err = unlink(fileName);
             if (err != 0 && errno != ENOENT) {
                 fprintf(stderr, "ERROR: couldn't remove existing file\n");
-                abort();
+                if (encoder != NULL) encoder->release();  // stop screenrecord instead of abort
+                   ALOGW("couldn't remove existing file");
+                   return err;
+//              abort();
             }
             int fd = open(fileName, O_CREAT | O_LARGEFILE | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
             if (fd < 0) {
                 fprintf(stderr, "ERROR: couldn't open file\n");
-                abort();
+                if (encoder != NULL) encoder->release();  // stop screenrecord instead of abort
+                   ALOGW("couldn't open file");
+                   return err;
+//              abort();
             }
             muxer = new MediaMuxer(fd, MediaMuxer::OUTPUT_FORMAT_MPEG_4);
             close(fd);
@@ -1058,7 +1048,7 @@ int main(int argc, char* const argv[]) {
         int fd = open(fileName, O_CREAT | O_RDWR, 0644);
         if (fd < 0) {
             fprintf(stderr, "Unable to open '%s': %s\n", fileName, strerror(errno));
-            return 1;
+            _exit(1);
         }
         close(fd);
     }
@@ -1069,5 +1059,5 @@ int main(int argc, char* const argv[]) {
         notifyMediaScanner(fileName);
     }
     ALOGD(err == NO_ERROR ? "success" : "failed");
-    return (int) err;
+    _exit((int) err);
 }

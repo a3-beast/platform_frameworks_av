@@ -40,6 +40,9 @@ enum {
     READMULTIPLE,
     RELEASE_BUFFER,
     SUPPORT_NONBLOCKING_READ,
+        //mtkadd+
+    SET_VENDOR_META,
+    STOP_TOC_THREAD_IF_TOC_ENABLED,
 };
 
 enum {
@@ -210,6 +213,27 @@ public:
         Parcel data, reply;
         data.writeInterfaceToken(BpMediaSource::getInterfaceDescriptor());
         return remote()->transact(PAUSE, data, &reply);
+    }
+
+    virtual status_t setVendorMeta(const sp<MetaData> & meta) {
+        ALOGV("setVendorMeta");
+        Parcel data, reply;
+        data.writeInterfaceToken(BpMediaSource::getInterfaceDescriptor());
+        if (meta != NULL) {
+            meta->writeToParcel(data);
+        }
+        return remote()->transact(SET_VENDOR_META, data, &reply);
+    }
+
+    virtual status_t stopTocThreadIfTocEnabled() {
+        ALOGV("stopTocThreadIfTocEnabled");
+        Parcel data, reply;
+        data.writeInterfaceToken(BpMediaSource::getInterfaceDescriptor());
+        status_t ret = remote()->transact(STOP_TOC_THREAD_IF_TOC_ENABLED, data, &reply);
+        if (ret == NO_ERROR) {
+            return reply.readInt32();
+        }
+        return MEDIA_ERROR_BASE;
     }
 
 private:
@@ -441,6 +465,24 @@ status_t BnMediaSource::onTransact(
             reply->writeInt32((int32_t)supportNonblockingRead());
             return NO_ERROR;
         }
+        //mtkadd
+        case SET_VENDOR_META: {
+            ALOGV("setVendorMeta");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            sp<MetaData> meta;
+            if (data.dataAvail()) {
+                meta = MetaData::createFromParcel(data);
+            }
+            setVendorMeta(meta);
+
+            return NO_ERROR;
+        }
+        case STOP_TOC_THREAD_IF_TOC_ENABLED: {
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            reply->writeInt32((int32_t)stopTocThreadIfTocEnabled());
+            return NO_ERROR;
+        }
+
         default:
             return BBinder::onTransact(code, data, reply, flags);
     }

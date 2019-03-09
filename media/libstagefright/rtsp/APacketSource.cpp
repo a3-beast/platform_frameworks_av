@@ -417,7 +417,11 @@ APacketSource::APacketSource(
     if (sessionDesc->getDurationUs(&durationUs)) {
         mFormat->setInt64(kKeyDuration, durationUs);
     } else {
-        mFormat->setInt64(kKeyDuration, -1ll);
+        //mFormat->setInt64(kKeyDuration, -1ll);
+
+        //MTK enhance, if live streaming duration is -1, suspend resume will fail.
+        //so we use 0 replace it
+        mFormat->setInt64(kKeyDuration, 0ll);
     }
 
     mInitCheck = OK;

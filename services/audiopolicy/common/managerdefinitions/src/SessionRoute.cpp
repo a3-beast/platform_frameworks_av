@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "APM_SessionRoute"
+#define LOG_TAG "APM::SessionRoute"
 //#define LOG_NDEBUG 0
 
 #include "SessionRoute.h"
@@ -122,17 +122,19 @@ void SessionRouteMap::addRoute(audio_session_t session,
 audio_devices_t SessionRouteMap::getActiveDeviceForStream(audio_stream_type_t streamType,
                                                           const DeviceVector& availableDevices)
 {
+    audio_devices_t device = AUDIO_DEVICE_NONE;
+
     for (size_t index = 0; index < size(); index++) {
         sp<SessionRoute> route = valueAt(index);
         if (streamType == route->mStreamType && route->isActiveOrChanged()
                 && route->mDeviceDescriptor != 0) {
-            audio_devices_t device = route->mDeviceDescriptor->type();
+            device = route->mDeviceDescriptor->type();
             if (!availableDevices.getDevicesFromType(device).isEmpty()) {
-                return device;
+                break;
             }
         }
     }
-    return AUDIO_DEVICE_NONE;
+    return device;
 }
 
 } // namespace android

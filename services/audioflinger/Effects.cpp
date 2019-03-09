@@ -35,6 +35,10 @@
 #include "AudioFlinger.h"
 #include "ServiceUtilities.h"
 
+#if defined(MTK_AUDIO_DEBUG)
+#include <media/AudioParameter.h>
+#include <media/AudioUtilmtk.h>
+#endif // MTK_AUDIO_DEBUG
 // ----------------------------------------------------------------------------
 
 // Note: the following macro is used for extremely verbose logging message.  In
@@ -419,7 +423,46 @@ void AudioFlinger::EffectModule::process()
                 }
             }
 #endif
+#if defined(MTK_AUDIO_DEBUG)
+#ifdef FLOAT_EFFECT_CHAIN
+            void* dumpPtr = (void*) inBuffer->audioBuffer()->f32;
+            uint32_t dumpInChannelCount = mInChannelCountRequested;
+#else
+            void* dumpPtr = (void*) mConfig.inputCfg.buffer.s16;
+            uint32_t dumpInChannelCount = inChannelCount;
+#endif
+            String8 fileName;
+            if (AudioDump::getProperty(AudioDump::PROP_AUDIO_DUMP_EFFECT)) {
+                fileName = String8::format("%s_session%d_%d_in.pcm",
+                    AudioDump::af_effect_pcm, mSessionId, mId);
+                AudioDump::threadDump(fileName, dumpPtr,
+                    mConfig.inputCfg.buffer.frameCount *  dumpInChannelCount
+                    * audio_bytes_per_sample((audio_format_t)mConfig.inputCfg.format),
+                    (audio_format_t)mConfig.inputCfg.format, mConfig.inputCfg.samplingRate,
+                    dumpInChannelCount);
+            }
+#endif // MTK_AUDIO_DEBUG
+
             ret = mEffectInterface->process();
+
+#if defined(MTK_AUDIO_DEBUG)
+#ifdef FLOAT_EFFECT_CHAIN
+            dumpPtr = (void*) outBuffer->audioBuffer()->f32;
+            uint32_t dumpOutChannelCount = mOutChannelCountRequested;
+#else
+            dumpPtr = (void*) mConfig.outputCfg.buffer.s16;
+            uint32_t dumpOutChannelCount = outChannelCount;
+#endif
+            if (AudioDump::getProperty(AudioDump::PROP_AUDIO_DUMP_EFFECT)) {
+                fileName = String8::format("%s_session%d_%d_in.pcm",
+                    AudioDump::af_effect_pcm, mSessionId, mId);
+                AudioDump::threadDump(fileName, dumpPtr,
+                    mConfig.inputCfg.buffer.frameCount *  dumpOutChannelCount
+                    * audio_bytes_per_sample((audio_format_t)mConfig.inputCfg.format),
+                    (audio_format_t)mConfig.inputCfg.format, mConfig.inputCfg.samplingRate,
+                    dumpOutChannelCount);
+            }
+#endif // MTK_AUDIO_DEBUG
 #ifdef FLOAT_EFFECT_CHAIN
             if (!mSupportsFloat) { // convert output int16_t back to float.
                 sp<EffectBufferHalInterface> target =
@@ -1101,11 +1144,19 @@ status_t AudioFlinger::EffectModule::setVolume(uint32_t *left, uint32_t *right, 
     if (isProcessEnabled() &&
             ((mDescriptor.flags & EFFECT_FLAG_VOLUME_MASK) == EFFECT_FLAG_VOLUME_CTRL ||
             (mDescriptor.flags & EFFECT_FLAG_VOLUME_MASK) == EFFECT_FLAG_VOLUME_IND)) {
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+        uint32_t volume[3];
+#else
         uint32_t volume[2];
+#endif
         uint32_t *pVolume = NULL;
         uint32_t size = sizeof(volume);
         volume[0] = *left;
         volume[1] = *right;
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+        volume[2] = mFirstVolume;
+        mFirstVolume = false;
+#endif
         if (controller) {
             pVolume = volume;
         }
@@ -1252,6 +1303,13 @@ bool AudioFlinger::EffectModule::isOffloaded() const
     Mutex::Autolock _l(mLock);
     return mOffloaded;
 }
+//<MTK_AUDIO_ADD
+// To identify the volume applied is the frist value or not.
+void AudioFlinger::EffectModule::setFirstVolume(bool firstVolume)
+{
+    mFirstVolume = firstVolume;
+}
+//MTK_AUDIO_ADD>
 
 String8 effectFlagsToString(uint32_t flags) {
     String8 s;
@@ -2223,6 +2281,19 @@ bool AudioFlinger::EffectChain::setVolume_l(uint32_t *left, uint32_t *right, boo
 
     // second get volume update from volume controller
     if (ctrlIdx >= 0) {
+#if defined(MTK_AUDIO_FIX_DEFAULT_DEFECT)
+        if (mNewLeftVolume == UINT_MAX && mNewRightVolume == UINT_MAX) {
+            ALOGV("set first volume");
+            mEffects[ctrlIdx]->setFirstVolume(true);
+            mEffects[ctrlIdx]->mFirstVolCtrl  = false;
+        }
+        if(mEffects[ctrlIdx]->mFirstVolCtrl == true)
+        {
+            ALOGV("set first volume for effect module id %d", mEffects[ctrlIdx]->id());
+            mEffects[ctrlIdx]->setFirstVolume( true );
+            mEffects[ctrlIdx]->mFirstVolCtrl  = false;
+        }
+#endif
         mEffects[ctrlIdx]->setVolume(&newLeft, &newRight, true);
         mNewLeftVolume = newLeft;
         mNewRightVolume = newRight;

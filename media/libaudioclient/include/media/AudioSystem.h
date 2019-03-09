@@ -482,6 +482,9 @@ private:
     static audio_channel_mask_t gPrevInChannelMask;
 
     static sp<IAudioPolicyService> gAudioPolicyService;
+    public:
+    static status_t startOutputSamplerate (audio_io_handle_t output,audio_stream_type_t stream,audio_session_t session ,int samplerate);
+    static status_t stopOutputSamplerate (audio_io_handle_t output,audio_stream_type_t stream,audio_session_t session ,int samplerate);
 };
 
 };  // namespace android
